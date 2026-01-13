@@ -46,5 +46,9 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	protected.HandleFunc("/flows/{id}/save", flowHandler.SaveFlowData).Methods("POST")
 	protected.HandleFunc("/flows/{id}/execute", execHandler.ExecuteFlow).Methods("POST")
 
+	router.Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	return router
 }

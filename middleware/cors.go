@@ -7,14 +7,12 @@ import (
 
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-		// Debug log so we can inspect preflight requests during development
-		log.Printf("CORS middleware: %s %s\n", r.Method, r.URL.Path)
-		if r.Method == "OPTIONS" {
-			log.Printf("CORS middleware: responding to preflight for %s\n", r.URL.Path)
+		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
