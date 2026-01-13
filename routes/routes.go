@@ -24,7 +24,8 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	api := router.PathPrefix("/api").Subrouter()
 
 	// Rutas públicas
-	api.HandleFunc("/register", userHandler.Register).Methods("POST")
+	// Allow preflight OPTIONS on register as well (some browsers send OPTIONS before POST)
+	api.HandleFunc("/register", userHandler.Register).Methods("POST", "OPTIONS")
 	api.HandleFunc("/login", userHandler.Login).Methods("POST", "OPTIONS")
 
 	// Health check
