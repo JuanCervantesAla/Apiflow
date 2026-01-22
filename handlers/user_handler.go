@@ -88,3 +88,23 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("userId")
+	if userID == nil {
+		respondError(w, http.StatusUnauthorized, "Usuario no autenticado")
+		return
+	}
+
+	var user models.User
+	if err := h.DB.First(&user, "id = ?", userID).Error; err != nil {
+		respondError(w, http.StatusNotFound, "Usuario no encontrado")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"id":    user.ID,
+		"name":  user.Name,
+		"email": user.Email,
+	})
+}

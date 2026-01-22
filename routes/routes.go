@@ -38,6 +38,10 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	protected := api.NewRoute().Subrouter()
 	protected.Use(middleware.JWTAuth)
 
+	//User
+	protected.HandleFunc("/me", userHandler.GetMe).Methods("GET", "OPTIONS")
+
+	//Flows
 	protected.HandleFunc("/flows", flowHandler.GetAllFlows).Methods("GET")
 	protected.HandleFunc("/flows", flowHandler.CreateFlow).Methods("POST")
 	protected.HandleFunc("/flows/{id}", flowHandler.GetFlow).Methods("GET")
