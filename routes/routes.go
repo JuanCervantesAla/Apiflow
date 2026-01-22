@@ -19,6 +19,7 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	flowHandler := handlers.NewFlowHandler(db)
 	execHandler := handlers.NewExecutionHandler(db)
 	userHandler := handlers.NewUserHandler(db)
+	nodeTypeHandler := handlers.NewNodeTypeHandler(db)
 
 	// API Routes
 	api := router.PathPrefix("/api").Subrouter()
@@ -49,6 +50,10 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	protected.HandleFunc("/flows/{id}", flowHandler.DeleteFlow).Methods("DELETE")
 	protected.HandleFunc("/flows/{id}/save", flowHandler.SaveFlowData).Methods("POST")
 	protected.HandleFunc("/flows/{id}/execute", execHandler.ExecuteFlow).Methods("POST")
+
+	// Node Types
+	protected.HandleFunc("/node-types", nodeTypeHandler.GetAllNodeTypes).Methods("GET")
+	protected.HandleFunc("/node-types/category", nodeTypeHandler.GetNodeTypesByCategory).Methods("GET")
 
 	router.Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
