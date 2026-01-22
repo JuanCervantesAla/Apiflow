@@ -21,6 +21,7 @@ func InitDB(dsn string) (*gorm.DB, error) {
 		&models.Flow{},
 		&models.Node{},
 		&models.Edge{},
+		&models.NodeType{},
 	)
 	if err != nil {
 		return nil, err

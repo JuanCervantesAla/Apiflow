@@ -20,6 +20,7 @@ func main() {
 	//Migrations
 	//TODO: Make better migrations
 	database.SeedAdminUser(db)
+	database.SeedNodeTypes(db)
 
 	router := routes.SetupRoutes(db)
 	router.Use(middleware.CORS)
