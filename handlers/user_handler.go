@@ -51,7 +51,22 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]string{"message": "User Created!"})
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"userId": user.ID,
+		"email":  user.Email,
+		"exp":    time.Now().Add(time.Hour * 72).Unix(),
+	})
+
+	tokenString, _ := token.SignedString(jwtSecret)
+	respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"message": "User Created!",
+		"token":   tokenString,
+		"user": map[string]interface{}{
+			"id":    user.ID,
+			"name":  user.Name,
+			"email": user.Email,
+		},
+	})
 }
 
 // LOGIN FUNC
