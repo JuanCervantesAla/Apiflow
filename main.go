@@ -21,6 +21,7 @@ func main() {
 	//TODO: Make better migrations
 	database.SeedAdminUser(db)
 	database.SeedNodeTypes(db)
+	database.MigrateNodeCategories(db)
 
 	router := routes.SetupRoutes(db)
 	router.Use(middleware.CORS)
