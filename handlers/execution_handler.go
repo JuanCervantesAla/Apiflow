@@ -2,79 +2,49 @@ package handlers
 
 import (
 	"capyflow/api/models"
+	"capyflow/api/services"
+	"log"
 	"net/http"
-	"time"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 )
 
 type ExecutionHandler struct {
-	DB *gorm.DB
+	DB              *gorm.DB
+	ExecutorService *services.ExecutorService
 }
 
-// "Creates the connection"
+// NewExecutionHandler
 func NewExecutionHandler(db *gorm.DB) *ExecutionHandler {
-	return &ExecutionHandler{DB: db}
+	return &ExecutionHandler{
+		DB:              db,
+		ExecutorService: services.NewExecutorService(),
+	}
 }
 
 // ExecuteFlow - POST /api/flows/{id}/execute
 func (h *ExecutionHandler) ExecuteFlow(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
 	vars := mux.Vars(r)
 	flowID := vars["id"]
 
-	//Searches for the flow
 	var flow models.Flow
-	if err := h.DB.Preload("Nodes").Preload("Edges").First(&flow, "id = ?", flowID).Error; err != nil {
+	if err := h.DB.Preload("Nodes").Preload("Edges").
+		First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
 		respondError(w, http.StatusNotFound, "Flujo no encontrado")
 		return
 	}
 
-	result := h.executeFlowLogic(&flow)
+	for i, node := range flow.Nodes {
+		log.Printf("  Nodo [%d]: ID=%s, Type=%s, Category=%s, Label=%s",
+			i, node.ID, node.Type, node.Category, node.Label)
+	}
+	for i, edge := range flow.Edges {
+		log.Printf("  Edge [%d]: %s -> %s", i, edge.Source, edge.Target)
+	}
+
+	result := h.ExecutorService.ExecuteFlow(&flow)
 
 	respondJSON(w, http.StatusOK, result)
-
-}
-
-//Execute basic logi of the flow
-
-func (h *ExecutionHandler) executeFlowLogic(flow *models.Flow) map[string]interface{} {
-	startTime := time.Now()
-	executedNodes := []string{}
-
-	//Finds the initial node
-	nodeMap := make(map[string]*models.Node)
-	for i := range flow.Nodes {
-		nodeMap[flow.Nodes[i].ID] = &flow.Nodes[i]
-	}
-
-	for _, node := range flow.Nodes {
-		//Update status
-		node.Status = models.StatusRunning
-		h.DB.Save(&node)
-
-		//Simulates process
-		time.Sleep(100 * time.Millisecond)
-
-		node.Status = models.StatusSuccess
-		now := time.Now()
-		node.LastRun = &now
-		node.ExecutionTimeMs = 100
-		h.DB.Save(&node)
-
-		executedNodes = append(executedNodes, node.ID)
-
-	}
-
-	duration := time.Since(startTime)
-
-	//Return the results
-	return map[string]interface{}{
-		"status":        "success",
-		"executedNodes": executedNodes,
-		"durationMs":    duration.Milliseconds(),
-		"startedAt":     startTime,
-		"completedAt":   time.Now(),
-	}
-
 }
