@@ -16,7 +16,6 @@ func SeedAdminUser(db *gorm.DB) {
 
 	var user models.User
 	if err := db.First(&user, "email = ?", email).Error; err == nil {
-		// Ya existe, no hacer nada
 		return
 	}
 

@@ -137,6 +137,24 @@ func SeedNodeTypes(db *gorm.DB) {
 			CreatedAt:      time.Now(),
 			UpdatedAt:      time.Now(),
 		},
+
+		{
+			ID:             uuid.New().String(),
+			Name:           "Log",
+			Type:           "log",
+			Category:       models.CategoryIO,
+			Description:    "Registra información del flujo para depuración",
+			Icon:           "IconTerminal",
+			Color:          "#6B7280",
+			Version:        "1.0.0",
+			DefaultInputs:  `[{"id":"input","name":"Input","type":"any","required":true}]`,
+			DefaultOutputs: `[{"id":"output","name":"Output","type":"any"}]`,
+			DefaultParams:  `[{"id":"label","name":"Label","type":"string","required":false}]`,
+			IsActive:       true,
+			IsBeta:         false,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		},
 	}
 
 	for _, nt := range nodeTypes {
