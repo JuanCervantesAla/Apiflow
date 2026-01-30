@@ -27,6 +27,7 @@ var AllowedNodeTypes = map[string]bool{
 	"json-parser":     true,
 	"if-condition":    true,
 	"http-request":    true,
+	"log":             true,
 	"custom":          true,
 }
 

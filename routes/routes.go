@@ -20,6 +20,7 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	execHandler := handlers.NewExecutionHandler(db)
 	userHandler := handlers.NewUserHandler(db)
 	nodeTypeHandler := handlers.NewNodeTypeHandler(db)
+	webhookHandler := handlers.NewWebhookHandler(db)
 
 	// API Routes
 	api := router.PathPrefix("/api").Subrouter()
@@ -54,6 +55,9 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	// Node Types
 	protected.HandleFunc("/node-types", nodeTypeHandler.GetAllNodeTypes).Methods("GET")
 	protected.HandleFunc("/node-types/category", nodeTypeHandler.GetNodeTypesByCategory).Methods("GET")
+
+	//Webhook
+	protected.HandleFunc("/webhooks/{id}", webhookHandler.HandleWebhook).Methods("POST")
 
 	router.Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
