@@ -16,4 +16,6 @@ type FlowExecutionResult struct {
 	Results       map[string]*ExecutionResult `json:"results"`
 	DurationMs    int64                       `json:"durationMs"`
 	ErrorMessage  string                      `json:"errorMessage,omitempty"`
+	UserID        string                      `json:"-"`
+	ExecutionID   string                      `json:"-"`
 }
