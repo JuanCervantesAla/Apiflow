@@ -9,9 +9,9 @@ import (
 type IfConditionNode struct{}
 
 type Condition struct {
-	Left     string      `json:"left"`
+	Field    string      `json:"field"`
 	Operator string      `json:"operator"`
-	Right    interface{} `json:"right"`
+	Value    interface{} `json:"value"`
 }
 
 func (n *IfConditionNode) Execute(
@@ -26,7 +26,7 @@ func (n *IfConditionNode) Execute(
 	var leftValue interface{}
 	found := false
 	for _, output := range prev {
-		if val, ok := output[cond.Left]; ok {
+		if val, ok := output[cond.Field]; ok {
 			leftValue = val
 			found = true
 			break
@@ -34,10 +34,10 @@ func (n *IfConditionNode) Execute(
 	}
 
 	if !found {
-		return nil, fmt.Errorf("Condition key not found: %s", cond.Left)
+		return nil, fmt.Errorf("Condition key not found: %s", cond.Field)
 	}
 
-	result, err := evaluateCondition(leftValue, cond.Operator, cond.Right)
+	result, err := evaluateCondition(leftValue, cond.Operator, cond.Value)
 	if err != nil {
 		return nil, err
 	}

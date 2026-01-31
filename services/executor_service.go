@@ -94,6 +94,17 @@ func (es *ExecutorService) execute(
 
 	visited := map[string]bool{}
 
+	if es.Hub != nil && userID != "" {
+		es.Hub.BroadcastToUser(userID, websocket.ExecutionUpdate{
+			Type:        "start",
+			ExecutionID: executionID,
+			FlowID:      flow.ID,
+			Status:      "running",
+			Message:     "Execution started",
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
 	es.executeNode(
 		startNode.ID,
 		nodeMap,
@@ -104,5 +115,28 @@ func (es *ExecutorService) execute(
 	)
 
 	result.DurationMs = time.Since(start).Milliseconds()
+
+	// Enviar mensaje de finalización
+	if es.Hub != nil && userID != "" {
+		updateType := "complete"
+		message := "Execution completed successfully"
+		if result.Status == "error" || result.Status == "partial" {
+			updateType = "error"
+			message = result.ErrorMessage
+			if message == "" {
+				message = "Execution completed with errors"
+			}
+		}
+
+		es.Hub.BroadcastToUser(userID, websocket.ExecutionUpdate{
+			Type:        updateType,
+			ExecutionID: executionID,
+			FlowID:      flow.ID,
+			Status:      result.Status,
+			Message:     message,
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
 	return result
 }

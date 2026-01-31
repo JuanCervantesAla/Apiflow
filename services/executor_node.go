@@ -48,6 +48,20 @@ func (es *ExecutorService) executeNode(
 		result.Status = "partial"
 		result.Results[nodeID] = exec
 		result.ExecutedNodes = append(result.ExecutedNodes, nodeID)
+
+		// Enviar mensaje de error del nodo
+		if es.Hub != nil && result.UserID != "" {
+			es.Hub.BroadcastToUser(result.UserID, websocket.ExecutionUpdate{
+				Type:        "node",
+				ExecutionID: result.ExecutionID,
+				FlowID:      "",
+				NodeID:      nodeID,
+				Status:      "error",
+				Message:     err.Error(),
+				Timestamp:   time.Now().Format(time.RFC3339),
+			})
+		}
+
 		return
 	}
 
@@ -58,6 +72,42 @@ func (es *ExecutorService) executeNode(
 	nodeOutputs[nodeID] = output
 	result.Results[nodeID] = exec
 	result.ExecutedNodes = append(result.ExecutedNodes, nodeID)
+
+	// Enviar mensaje de nodo completado exitosamente
+	if es.Hub != nil && result.UserID != "" {
+		// Create a safe copy of output data without circular references
+		safeData := make(map[string]interface{})
+		for k, v := range output {
+			// Only include simple types to avoid circular references
+			switch v.(type) {
+			case string, int, int64, float64, bool, nil:
+				safeData[k] = v
+			case map[string]interface{}:
+				// For maps, create a shallow copy
+				if mapVal, ok := v.(map[string]interface{}); ok {
+					safeCopy := make(map[string]interface{})
+					for mk, mv := range mapVal {
+						switch mv.(type) {
+						case string, int, int64, float64, bool, nil:
+							safeCopy[mk] = mv
+						}
+					}
+					safeData[k] = safeCopy
+				}
+			}
+		}
+
+		es.Hub.BroadcastToUser(result.UserID, websocket.ExecutionUpdate{
+			Type:        "node",
+			ExecutionID: result.ExecutionID,
+			FlowID:      "",
+			NodeID:      nodeID,
+			Status:      "success",
+			Message:     "Node completed successfully",
+			Data:        safeData,
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
 
 	edges := edgeMap[nodeID]
 
@@ -76,7 +126,13 @@ func (es *ExecutorService) executeNode(
 		}
 
 		for _, e := range edges {
-			if e.Label == branch {
+			// Usar sourceHandle si está disponible, si no, usar label
+			edgeIdentifier := e.SourceHandle
+			if edgeIdentifier == "" {
+				edgeIdentifier = e.Label
+			}
+
+			if edgeIdentifier == branch {
 				es.executeNode(
 					e.Target,
 					nodeMap,
