@@ -3,29 +3,36 @@ package services
 import (
 	"capyflow/api/models"
 	"capyflow/api/rules"
+	"capyflow/api/websocket"
 	"time"
 )
 
-type ExecutorService struct{}
-
-func NewExecutorService() *ExecutorService {
-	return &ExecutorService{}
+type ExecutorService struct {
+	Hub *websocket.Hub
 }
 
-func (es *ExecutorService) ExecuteFlow(flow *models.Flow) *FlowExecutionResult {
-	return es.execute(flow, map[string]map[string]interface{}{})
+func NewExecutorService(hub *websocket.Hub) *ExecutorService {
+	return &ExecutorService{
+		Hub: hub,
+	}
+}
+
+func (es *ExecutorService) ExecuteFlow(flow *models.Flow, userID, executionID string) *FlowExecutionResult {
+	return es.execute(flow, map[string]map[string]interface{}{}, userID, executionID)
 }
 
 func (es *ExecutorService) ExecuteFlowWithContext(
 	flow *models.Flow,
 	initialContext map[string]map[string]interface{},
+	userID, executionID string,
 ) *FlowExecutionResult {
-	return es.execute(flow, initialContext)
+	return es.execute(flow, initialContext, userID, executionID)
 }
 
 func (es *ExecutorService) execute(
 	flow *models.Flow,
 	initialContext map[string]map[string]interface{},
+	userID, executionID string,
 ) *FlowExecutionResult {
 
 	start := time.Now()
@@ -34,6 +41,8 @@ func (es *ExecutorService) execute(
 		Status:        "success",
 		ExecutedNodes: []string{},
 		Results:       map[string]*ExecutionResult{},
+		UserID:        userID,
+		ExecutionID:   executionID,
 	}
 
 	if err := rules.ValidateFlow(flow); err != nil {

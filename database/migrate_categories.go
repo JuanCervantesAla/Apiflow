@@ -8,10 +8,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// MigrateNodeCategories actualiza los nodos existentes que tengan subtitle como trigger
-// pero no tengan category configurada
 func MigrateNodeCategories(db *gorm.DB) error {
-	log.Println("🔄 Iniciando migración de categorías de nodos...")
+	log.Println("Iniciando migración de categorías de nodos...")
 
 	var nodes []models.Node
 	if err := db.Where("category IS NULL OR category = ''").Find(&nodes).Error; err != nil {
@@ -19,9 +17,6 @@ func MigrateNodeCategories(db *gorm.DB) error {
 		return err
 	}
 
-	log.Printf("📋 Encontrados %d nodos sin categoría", len(nodes))
-
-	// Mapeo de subtítulos a categorías
 	subtitleToCategoryMap := map[string]string{
 		"trigger":     "trigger",
 		"ai":          "ai",

@@ -3,6 +3,7 @@ package handlers
 import (
 	"capyflow/api/models"
 	"capyflow/api/services"
+	"capyflow/api/websocket"
 	"encoding/json"
 	"net/http"
 
@@ -15,10 +16,10 @@ type WebhookHandler struct {
 	ExecutorService *services.ExecutorService
 }
 
-func NewWebhookHandler(db *gorm.DB) *WebhookHandler {
+func NewWebhookHandler(db *gorm.DB, hub *websocket.Hub) *WebhookHandler {
 	return &WebhookHandler{
 		DB:              db,
-		ExecutorService: services.NewExecutorService(),
+		ExecutorService: services.NewExecutorService(hub),
 	}
 }
 
@@ -49,6 +50,6 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	result := h.ExecutorService.ExecuteFlowWithContext(&flow, initialContext)
+	result := h.ExecutorService.ExecuteFlowWithContext(&flow, initialContext, "webhook", "")
 	respondJSON(w, http.StatusOK, result)
 }

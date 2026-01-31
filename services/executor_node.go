@@ -2,6 +2,7 @@ package services
 
 import (
 	"capyflow/api/models"
+	"capyflow/api/websocket"
 	"time"
 )
 
@@ -25,6 +26,18 @@ func (es *ExecutorService) executeNode(
 
 	start := time.Now()
 	exec := &ExecutionResult{NodeID: nodeID}
+
+	if es.Hub != nil && result.UserID != "" {
+		es.Hub.BroadcastToUser(result.UserID, websocket.ExecutionUpdate{
+			Type:        "node",
+			ExecutionID: result.ExecutionID,
+			FlowID:      "",
+			NodeID:      nodeID,
+			Status:      "running",
+			Message:     "Executing " + node.Label,
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
 
 	output, err := es.processNode(node, nodeOutputs)
 	if err != nil {
