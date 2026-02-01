@@ -22,6 +22,7 @@ func InitDB(dsn string) (*gorm.DB, error) {
 		&models.Node{},
 		&models.Edge{},
 		&models.NodeType{},
+		&models.Execution{},
 	)
 	if err != nil {
 		return nil, err

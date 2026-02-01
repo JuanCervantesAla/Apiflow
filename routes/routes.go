@@ -3,13 +3,14 @@ package routes
 import (
 	"capyflow/api/handlers"
 	"capyflow/api/middleware"
+	"capyflow/api/websocket"
 	"net/http"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 )
 
-func SetupRoutes(db *gorm.DB) *mux.Router {
+func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	router := mux.NewRouter()
 
 	// Middleware global CORS
@@ -17,15 +18,17 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 
 	// Handlers
 	flowHandler := handlers.NewFlowHandler(db)
-	execHandler := handlers.NewExecutionHandler(db)
+	execHandler := handlers.NewExecutionHandler(db, hub)
 	userHandler := handlers.NewUserHandler(db)
 	nodeTypeHandler := handlers.NewNodeTypeHandler(db)
+	webhookHandler := handlers.NewWebhookHandler(db, hub)
+	wsHandler := handlers.NewWebSocketHandler(hub)
+	wsTicketHandler := handlers.NewWSTicketHandler()
 
 	// API Routes
 	api := router.PathPrefix("/api").Subrouter()
 
-	// Rutas públicas
-	// Allow preflight OPTIONS on register as well (some browsers send OPTIONS before POST)
+	// Public routes
 	api.HandleFunc("/register", userHandler.Register).Methods("POST", "OPTIONS")
 	api.HandleFunc("/login", userHandler.Login).Methods("POST", "OPTIONS")
 
@@ -35,14 +38,14 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 		w.Write([]byte(`{"status":"ok"}`))
 	}).Methods("GET")
 
-	// Rutas protegidas (requieren JWT)
+	// Protected routezzzz
 	protected := api.NewRoute().Subrouter()
 	protected.Use(middleware.JWTAuth)
 
-	//User
+	// User
 	protected.HandleFunc("/me", userHandler.GetMe).Methods("GET", "OPTIONS")
 
-	//Flows
+	// Flows
 	protected.HandleFunc("/flows", flowHandler.GetAllFlows).Methods("GET")
 	protected.HandleFunc("/flows", flowHandler.CreateFlow).Methods("POST")
 	protected.HandleFunc("/flows/{id}", flowHandler.GetFlow).Methods("GET")
@@ -51,10 +54,27 @@ func SetupRoutes(db *gorm.DB) *mux.Router {
 	protected.HandleFunc("/flows/{id}/save", flowHandler.SaveFlowData).Methods("POST")
 	protected.HandleFunc("/flows/{id}/execute", execHandler.ExecuteFlow).Methods("POST")
 
+	// Executions
+	protected.HandleFunc("/flows/{id}/executions", execHandler.GetFlowExecutions).Methods("GET")
+	protected.HandleFunc("/executions", execHandler.GetAllExecutions).Methods("GET")
+	protected.HandleFunc("/executions/{id}", execHandler.GetExecution).Methods("GET")
+
 	// Node Types
 	protected.HandleFunc("/node-types", nodeTypeHandler.GetAllNodeTypes).Methods("GET")
 	protected.HandleFunc("/node-types/category", nodeTypeHandler.GetNodeTypesByCategory).Methods("GET")
 
+	// Webhook
+	protected.HandleFunc("/webhooks/{id}", webhookHandler.HandleWebhook).Methods("POST")
+
+	// WebSocket Ticket
+	protected.HandleFunc("/ws/ticket", wsTicketHandler.GenerateTicket).Methods("POST", "OPTIONS")
+
+	// WebSocket Connection
+	wsProtected := api.NewRoute().Subrouter()
+	wsProtected.Use(middleware.WSTicketAuth)
+	wsProtected.HandleFunc("/ws", wsHandler.HandleWebSocket).Methods("GET")
+
+	// OPTIONS global
 	router.Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

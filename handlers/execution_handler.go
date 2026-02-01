@@ -3,9 +3,12 @@ package handlers
 import (
 	"capyflow/api/models"
 	"capyflow/api/services"
-	"log"
+	"capyflow/api/websocket"
+	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 )
@@ -16,10 +19,10 @@ type ExecutionHandler struct {
 }
 
 // NewExecutionHandler
-func NewExecutionHandler(db *gorm.DB) *ExecutionHandler {
+func NewExecutionHandler(db *gorm.DB, hub *websocket.Hub) *ExecutionHandler {
 	return &ExecutionHandler{
 		DB:              db,
-		ExecutorService: services.NewExecutorService(),
+		ExecutorService: services.NewExecutorService(hub),
 	}
 }
 
@@ -36,15 +39,104 @@ func (h *ExecutionHandler) ExecuteFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i, node := range flow.Nodes {
-		log.Printf("  Nodo [%d]: ID=%s, Type=%s, Category=%s, Label=%s",
-			i, node.ID, node.Type, node.Category, node.Label)
-	}
-	for i, edge := range flow.Edges {
-		log.Printf("  Edge [%d]: %s -> %s", i, edge.Source, edge.Target)
+	execution := models.Execution{
+		ID:          uuid.New().String(),
+		FlowID:      flowID,
+		UserID:      userId,
+		Status:      models.ExecutionStatusRunning,
+		StartedAt:   time.Now(),
+		TriggerType: "manual",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
-	result := h.ExecutorService.ExecuteFlow(&flow)
+	if err := h.DB.Create(&execution).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "Error al crear registro de ejecución")
+		return
+	}
 
-	respondJSON(w, http.StatusOK, result)
+	result := h.ExecutorService.ExecuteFlow(&flow, userId, execution.ID)
+	now := time.Now()
+
+	resultsJSON, _ := json.Marshal(result.Results)
+	executedNodesJSON, _ := json.Marshal(result.ExecutedNodes)
+
+	execution.Status = models.ExecutionStatus(result.Status)
+	execution.FinishedAt = &now
+	execution.DurationMs = result.DurationMs
+	execution.Results = string(resultsJSON)
+	execution.ExecutedNodes = string(executedNodesJSON)
+	execution.ErrorMessage = result.ErrorMessage
+	execution.UpdatedAt = now
+
+	h.DB.Save(&execution)
+
+	response := map[string]interface{}{
+		"executionId": execution.ID,
+		"result":      result,
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// GetFlowExecutions - GET /api/flows/{id}/executions
+func (h *ExecutionHandler) GetFlowExecutions(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
+	vars := mux.Vars(r)
+	flowID := vars["id"]
+
+	var flow models.Flow
+	if err := h.DB.First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
+		respondError(w, http.StatusNotFound, "Flow no encontrado")
+		return
+	}
+
+	var executions []models.Execution
+	if err := h.DB.Where("flow_id = ?", flowID).
+		Order("started_at DESC").
+		Limit(50).
+		Find(&executions).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "Error al obtener ejecuciones")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, executions)
+}
+
+// GetExecution - GET /api/executions/{id}
+func (h *ExecutionHandler) GetExecution(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
+	vars := mux.Vars(r)
+	executionID := vars["id"]
+
+	var execution models.Execution
+	if err := h.DB.First(&execution, "id = ? AND user_id = ?", executionID, userId).Error; err != nil {
+		respondError(w, http.StatusNotFound, "Ejecución no encontrada")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, execution)
+}
+
+// GetAllExecutions - GET /api/executions (todas las del usuario)
+func (h *ExecutionHandler) GetAllExecutions(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
+
+	var executions []struct {
+		models.Execution
+		FlowName string `json:"flowName"`
+	}
+
+	if err := h.DB.Table("executions").
+		Select("executions.*, flows.name as flow_name").
+		Joins("LEFT JOIN flows ON flows.id = executions.flow_id").
+		Where("executions.user_id = ?", userId).
+		Order("executions.started_at DESC").
+		Limit(100).
+		Scan(&executions).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "Error al obtener ejecuciones")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, executions)
 }
