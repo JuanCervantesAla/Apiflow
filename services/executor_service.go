@@ -48,6 +48,22 @@ func (es *ExecutorService) execute(
 	if err := rules.ValidateFlow(flow); err != nil {
 		result.Status = "error"
 		result.ErrorMessage = err.Error()
+
+		// Enviar error detallado por WebSocket
+		if es.Hub != nil {
+			es.Hub.BroadcastToUser(userID, websocket.ExecutionUpdate{
+				Type:        "execution-error",
+				ExecutionID: executionID,
+				FlowID:      flow.ID,
+				Status:      "error",
+				Message:     err.Error(),
+				Data: map[string]string{
+					"details": "Revisa las conexiones del flujo. Los triggers deben estar al inicio y conectar hacia otros nodos (no recibir conexiones).",
+				},
+				Timestamp: time.Now().Format(time.RFC3339),
+			})
+		}
+
 		return result
 	}
 

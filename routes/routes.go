@@ -63,8 +63,11 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	protected.HandleFunc("/node-types", nodeTypeHandler.GetAllNodeTypes).Methods("GET")
 	protected.HandleFunc("/node-types/category", nodeTypeHandler.GetNodeTypesByCategory).Methods("GET")
 
-	// Webhook
-	protected.HandleFunc("/webhooks/{id}", webhookHandler.HandleWebhook).Methods("POST")
+	// Webhooks (protegidas para obtener URL)
+	protected.HandleFunc("/webhooks/{id}/url", webhookHandler.GetWebhookURL).Methods("GET", "OPTIONS")
+
+	// Webhooks públicos (para recibir webhooks externos)
+	api.HandleFunc("/webhooks/{id}", webhookHandler.HandleWebhook).Methods("POST", "GET", "OPTIONS")
 
 	// WebSocket Ticket
 	protected.HandleFunc("/ws/ticket", wsTicketHandler.GenerateTicket).Methods("POST", "OPTIONS")
