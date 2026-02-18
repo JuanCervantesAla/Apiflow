@@ -45,6 +45,9 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	// User
 	protected.HandleFunc("/me", userHandler.GetMe).Methods("GET", "OPTIONS")
 
+	// AI Generation (opcional - requiere OPENAI_API_KEY en env)
+	protected.HandleFunc("/ai/generate-flow", handlers.GenerateFlowWithAI).Methods("POST", "OPTIONS")
+
 	// Flows
 	protected.HandleFunc("/flows", flowHandler.GetAllFlows).Methods("GET")
 	protected.HandleFunc("/flows", flowHandler.CreateFlow).Methods("POST")
