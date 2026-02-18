@@ -11,6 +11,7 @@ const (
 	CategoryLogic       NodeCategory = "logic"
 	CategoryIO          NodeCategory = "io"
 	CategoryIntegration NodeCategory = "integration"
+	CategoryControl     NodeCategory = "control"
 )
 
 type NodeType struct {

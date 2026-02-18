@@ -9,4 +9,6 @@ var Registry = map[string]NodeHandler{
 	"json-parser":     &JsonParserNode{},
 	"webhook-trigger": &WebhookTriggerNode{},
 	"transform-data":  &TransformDataNode{},
+	"loop":            &LoopNode{},
+	"delay":           &DelayNode{},
 }

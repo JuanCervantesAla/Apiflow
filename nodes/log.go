@@ -4,14 +4,14 @@ import (
 	"capyflow/api/models"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type LogNode struct{}
 
 type LogParams struct {
-	Label string `json:"label"`
-	Level string `json:"level"`
-	Key   string `json:"key"`
+	Message string `json:"message"`
+	Level   string `json:"level"`
 }
 
 func (n *LogNode) Execute(
@@ -20,33 +20,32 @@ func (n *LogNode) Execute(
 ) (map[string]interface{}, error) {
 
 	params := LogParams{
-		Label: "LOG",
-		Level: "info",
+		Message: "",
+		Level:   "info",
 	}
 
 	if node.Parameters != "" {
-		_ = json.Unmarshal([]byte(node.Parameters), &params)
+		if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
+			return nil, fmt.Errorf("Invalid log parameters")
+		}
 	}
 
-	var value interface{} = prev
-
-	if params.Key != "" {
-		for _, out := range prev {
-			if v, ok := out[params.Key]; ok {
-				value = v
-				break
-			}
+	message := params.Message
+	for _, output := range prev {
+		for key, val := range output {
+			placeholder := fmt.Sprintf("{{%s}}", key)
+			message = strings.ReplaceAll(message, placeholder, fmt.Sprint(val))
 		}
 	}
 
 	fmt.Printf(
-		"[LOG][%s][%s] %+v\n",
+		"[LOG][%s] %s\n",
 		params.Level,
-		params.Label,
-		value,
+		message,
 	)
 
 	return map[string]interface{}{
-		"value": value,
+		"message": message,
+		"level":   params.Level,
 	}, nil
 }

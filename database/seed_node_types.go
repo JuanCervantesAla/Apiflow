@@ -155,6 +155,43 @@ func SeedNodeTypes(db *gorm.DB) {
 			CreatedAt:      time.Now(),
 			UpdatedAt:      time.Now(),
 		},
+
+		// ===== CONTROL =====
+		{
+			ID:             uuid.New().String(),
+			Name:           "Loop/ForEach",
+			Type:           "loop",
+			Category:       models.CategoryControl,
+			Description:    "Itera sobre arrays y aplica operaciones",
+			Icon:           "IconRepeat",
+			Color:          "#8B5CF6",
+			Version:        "1.0.0",
+			DefaultInputs:  `[{"id":"array","name":"Array","type":"array","required":true}]`,
+			DefaultOutputs: `[{"id":"items","name":"Items","type":"array"},{"id":"count","name":"Count","type":"number"}]`,
+			DefaultParams:  `[{"id":"operation","name":"Operation","type":"select","options":["forEach","map","filter"],"value":"forEach"}]`,
+			IsActive:       true,
+			IsBeta:         false,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		},
+
+		{
+			ID:             uuid.New().String(),
+			Name:           "Delay/Wait",
+			Type:           "delay",
+			Category:       models.CategoryControl,
+			Description:    "Pausa la ejecución por un tiempo determinado",
+			Icon:           "IconClock",
+			Color:          "#F59E0B",
+			Version:        "1.0.0",
+			DefaultInputs:  `[{"id":"input","name":"Input","type":"any","required":false}]`,
+			DefaultOutputs: `[{"id":"delayed","name":"Delayed","type":"boolean"},{"id":"durationMs","name":"Duration (ms)","type":"number"}]`,
+			DefaultParams:  `[{"id":"duration","name":"Duration","type":"number","value":1000,"min":100,"max":300000}]`,
+			IsActive:       true,
+			IsBeta:         false,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		},
 	}
 
 	for _, nt := range nodeTypes {

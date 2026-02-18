@@ -48,6 +48,22 @@ func (es *ExecutorService) execute(
 	if err := rules.ValidateFlow(flow); err != nil {
 		result.Status = "error"
 		result.ErrorMessage = err.Error()
+
+		// Enviar error detallado por WebSocket
+		if es.Hub != nil {
+			es.Hub.BroadcastToUser(userID, websocket.ExecutionUpdate{
+				Type:        "execution-error",
+				ExecutionID: executionID,
+				FlowID:      flow.ID,
+				Status:      "error",
+				Message:     err.Error(),
+				Data: map[string]string{
+					"details": "Revisa las conexiones del flujo. Los triggers deben estar al inicio y conectar hacia otros nodos (no recibir conexiones).",
+				},
+				Timestamp: time.Now().Format(time.RFC3339),
+			})
+		}
+
 		return result
 	}
 
@@ -94,6 +110,17 @@ func (es *ExecutorService) execute(
 
 	visited := map[string]bool{}
 
+	if es.Hub != nil && userID != "" {
+		es.Hub.BroadcastToUser(userID, websocket.ExecutionUpdate{
+			Type:        "start",
+			ExecutionID: executionID,
+			FlowID:      flow.ID,
+			Status:      "running",
+			Message:     "Execution started",
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
 	es.executeNode(
 		startNode.ID,
 		nodeMap,
@@ -104,5 +131,28 @@ func (es *ExecutorService) execute(
 	)
 
 	result.DurationMs = time.Since(start).Milliseconds()
+
+	// Enviar mensaje de finalización
+	if es.Hub != nil && userID != "" {
+		updateType := "complete"
+		message := "Execution completed successfully"
+		if result.Status == "error" || result.Status == "partial" {
+			updateType = "error"
+			message = result.ErrorMessage
+			if message == "" {
+				message = "Execution completed with errors"
+			}
+		}
+
+		es.Hub.BroadcastToUser(userID, websocket.ExecutionUpdate{
+			Type:        updateType,
+			ExecutionID: executionID,
+			FlowID:      flow.ID,
+			Status:      result.Status,
+			Message:     message,
+			Timestamp:   time.Now().Format(time.RFC3339),
+		})
+	}
+
 	return result
 }

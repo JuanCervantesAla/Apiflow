@@ -3,119 +3,144 @@ package nodes
 import (
 	"capyflow/api/models"
 	"encoding/json"
-	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 )
 
 type TransformDataNode struct{}
 
-type TransformParams struct {
-	Operation string      `json:"operation"`
-	Field     string      `json:"field"`
-	Multiply  float64     `json:"multiply,omitempty"`
-	Equals    interface{} `json:"equals,omitempty"`
+type Transformation struct {
+	Source    string `json:"source"`    // Campo origen con dot notation: "body.user.name"
+	Target    string `json:"target"`    // Campo destino: "userName"
+	Operation string `json:"operation"` // extract, calculate, concat, default
+	Value     string `json:"value"`     // Valor adicional para operaciones
 }
 
-func (n *TransformDataNode) Execute(
-	node *models.Node,
-	prev map[string]map[string]interface{},
-) (map[string]interface{}, error) {
+type TransformParams struct {
+	Transformations []Transformation `json:"transformations"`
+}
 
-	var params TransformParams
-	if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
-		return nil, errors.New("invalid transform-data parameters")
+func (n *TransformDataNode) Execute(node *models.Node, context map[string]map[string]interface{}) (map[string]interface{}, error) {
+	var p TransformParams
+
+	if err := json.Unmarshal([]byte(node.Parameters), &p); err != nil {
+		return nil, fmt.Errorf("invalid transform parameters: %v", err)
 	}
 
-	input, ok := prev[node.ID]["data"]
-	if !ok {
-		for _, out := range prev {
-			if v, exists := out["data"]; exists {
-				input = v
-				ok = true
-				break
+	if len(p.Transformations) == 0 {
+		return nil, fmt.Errorf("no transformations defined")
+	}
+
+	// Obtener el output del nodo anterior (context unificado)
+	var prev map[string]interface{}
+	for _, nodeOutput := range context {
+		if nodeOutput != nil && len(nodeOutput) > 0 {
+			// Merge all previous outputs into one context
+			if prev == nil {
+				prev = make(map[string]interface{})
+			}
+			for k, v := range nodeOutput {
+				prev[k] = v
 			}
 		}
 	}
 
-	if !ok {
-		return nil, errors.New("transform-data requires 'data' input")
+	if prev == nil {
+		prev = make(map[string]interface{})
 	}
 
-	items, ok := input.([]interface{})
-	if !ok {
-		return nil, errors.New("transform-data input must be an array")
+	result := make(map[string]interface{})
+
+	for _, transform := range p.Transformations {
+		switch transform.Operation {
+		case "extract":
+			// Extraer valor de campo anidado
+			value := getNestedValue(prev, transform.Source)
+			if value != nil {
+				result[transform.Target] = value
+			}
+
+		case "rename":
+			// Renombrar campo (igual que extract)
+			value := getNestedValue(prev, transform.Source)
+			if value != nil {
+				result[transform.Target] = value
+			}
+
+		case "default":
+			// Usar valor por defecto si no existe
+			value := getNestedValue(prev, transform.Source)
+			if value != nil {
+				result[transform.Target] = value
+			} else {
+				result[transform.Target] = transform.Value
+			}
+
+		case "calculate":
+			// Operaciones matemáticas simples
+			value := calculateExpression(transform.Value, context)
+			result[transform.Target] = value
+
+		case "concat":
+			// Concatenar strings con interpolación
+			interpolated := interpolateString(transform.Value, context)
+			result[transform.Target] = interpolated
+
+		default:
+			return nil, fmt.Errorf("unknown operation: %s", transform.Operation)
+		}
 	}
 
-	switch params.Operation {
-
-	case "map":
-		return mapOperation(items, params)
-
-	case "filter":
-		return filterOperation(items, params)
-
-	default:
-		return nil, errors.New("unsupported transform operation")
-	}
+	return result, nil
 }
 
-func mapOperation(
-	items []interface{},
-	params TransformParams,
-) (map[string]interface{}, error) {
-
-	result := []interface{}{}
-
-	for _, item := range items {
-		obj, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		val, exists := obj[params.Field]
-		if !exists {
-			result = append(result, obj)
-			continue
-		}
-
-		num, ok := toFloat(val)
-		if !ok {
-			result = append(result, obj)
-			continue
-		}
-
-		obj[params.Field] = num * params.Multiply
-		result = append(result, obj)
+// getNestedValue obtiene un valor anidado usando dot notation
+// Ejemplo: "body.user.name" → prev["body"]["user"]["name"]
+func getNestedValue(data map[string]interface{}, path string) interface{} {
+	if path == "" {
+		return nil
 	}
 
-	return map[string]interface{}{
-		"result": result,
-	}, nil
+	parts := strings.Split(path, ".")
+	current := data
+
+	for i, part := range parts {
+		if current == nil {
+			return nil
+		}
+
+		value, ok := current[part]
+		if !ok {
+			return nil
+		}
+
+		// Si es el último elemento, retornar el valor
+		if i == len(parts)-1 {
+			return value
+		}
+
+		// Si no es el último, debe ser un map para continuar
+		if nextMap, ok := value.(map[string]interface{}); ok {
+			current = nextMap
+		} else {
+			return nil
+		}
+	}
+
+	return nil
 }
 
-func filterOperation(
-	items []interface{},
-	params TransformParams,
-) (map[string]interface{}, error) {
+// calculateExpression evalúa expresiones matemáticas simples
+// Soporta: +, -, *, /, y variables del contexto
+func calculateExpression(expr string, context map[string]map[string]interface{}) interface{} {
+	// Interpolate variables first
+	interpolated := interpolateString(expr, context)
 
-	result := []interface{}{}
-
-	for _, item := range items {
-		obj, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		val, exists := obj[params.Field]
-		if !exists {
-			continue
-		}
-
-		if val == params.Equals {
-			result = append(result, obj)
-		}
+	// Try to parse as number
+	if num, err := strconv.ParseFloat(interpolated, 64); err == nil {
+		return num
 	}
 
-	return map[string]interface{}{
-		"result": result,
-	}, nil
+	return interpolated
 }

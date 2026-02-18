@@ -12,11 +12,12 @@ const (
 )
 
 var AllowedCategoryTransitions = map[string][]string{
-	string(models.CategoryTrigger): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO)},
-	string(models.CategoryData):    {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO)},
-	string(models.CategoryLogic):   {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO)},
-	string(models.CategoryIO):      {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO)},
-	"":                             {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), ""}, // Para custom/sin categoría
+	string(models.CategoryTrigger): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
+	string(models.CategoryData):    {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
+	string(models.CategoryLogic):   {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
+	string(models.CategoryIO):      {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
+	string(models.CategoryControl): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
+	"":                             {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), ""}, // Para custom/sin categoría
 }
 
 var AllowedNodeTypes = map[string]bool{
@@ -28,6 +29,8 @@ var AllowedNodeTypes = map[string]bool{
 	"if-condition":    true,
 	"http-request":    true,
 	"log":             true,
+	"loop":            true,
+	"delay":           true,
 	"custom":          true,
 }
 
@@ -69,6 +72,14 @@ func ValidateFlow(flow *models.Flow) error {
 			return errors.New("edge apunta a nodos inexistentes")
 		}
 
+		// Los triggers NO pueden recibir conexiones de entrada
+		if target.Category == string(models.CategoryTrigger) {
+			println("ERROR: No puedes conectar hacia un nodo trigger")
+			println("  Intentaste conectar:", source.Label, "→", target.Label)
+			println("  Los triggers deben estar al INICIO del flujo, no pueden recibir datos")
+			return errors.New("los triggers no pueden recibir conexiones de entrada. Conecta desde el trigger hacia otros nodos")
+		}
+
 		allowed := AllowedCategoryTransitions[source.Category]
 		valid := false
 		for _, cat := range allowed {
@@ -79,6 +90,11 @@ func ValidateFlow(flow *models.Flow) error {
 		}
 
 		if !valid {
+			// Debug: imprimir qué conexión falló
+			println("DEBUG: Conexión rechazada")
+			println("  Source Node:", source.Label, "Type:", source.Type, "Category:", source.Category)
+			println("  Target Node:", target.Label, "Type:", target.Type, "Category:", target.Category)
+			println("  Allowed categories from source:", allowed)
 			return errors.New("conexión no permitida entre nodos")
 		}
 	}

@@ -166,6 +166,12 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 		payload.Edges[i].FlowID = flowID
 		payload.Edges[i].CreatedAt = time.Now()
 		payload.Edges[i].UpdatedAt = time.Now()
+		// Debug: imprimir qué edges llegan
+		println("DEBUG Edge recibido:", payload.Edges[i].ID)
+		println("  Source:", payload.Edges[i].Source)
+		println("  Target:", payload.Edges[i].Target)
+		println("  SourceHandle:", payload.Edges[i].SourceHandle)
+		println("  TargetHandle:", payload.Edges[i].TargetHandle)
 	}
 	if len(payload.Edges) > 0 {
 		if err := h.DB.Create(&payload.Edges).Error; err != nil {

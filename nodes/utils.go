@@ -1,8 +1,11 @@
 package nodes
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
-// toFloat converts various numeric types to float64
 func toFloat(v interface{}) (float64, bool) {
 	switch t := v.(type) {
 	case int:
@@ -17,4 +20,30 @@ func toFloat(v interface{}) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func interpolateString(str string, prev map[string]map[string]interface{}) string {
+	result := str
+	for _, output := range prev {
+		for key, val := range output {
+			placeholder := fmt.Sprintf("{{%s}}", key)
+			result = strings.ReplaceAll(result, placeholder, fmt.Sprint(val))
+		}
+	}
+	return result
+}
+
+func interpolateMap(m map[string]interface{}, prev map[string]map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range m {
+		switch val := v.(type) {
+		case string:
+			result[k] = interpolateString(val, prev)
+		case map[string]interface{}:
+			result[k] = interpolateMap(val, prev)
+		default:
+			result[k] = v
+		}
+	}
+	return result
 }
