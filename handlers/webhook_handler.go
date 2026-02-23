@@ -52,11 +52,9 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Parsear el payload
 	var payload map[string]interface{}
 	if len(bodyBytes) > 0 {
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			// Si no es JSON, usar el body como string
 			payload = map[string]interface{}{
 				"body": string(bodyBytes),
 			}
@@ -64,8 +62,6 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	} else {
 		payload = map[string]interface{}{}
 	}
-
-	// Agregar metadata del request
 	payload["method"] = r.Method
 	payload["headers"] = extractHeadersFromRequest(r)
 	payload["query"] = r.URL.Query()
