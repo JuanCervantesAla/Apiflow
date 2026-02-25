@@ -18,4 +18,12 @@ var Registry = map[string]NodeHandler{
 	"split":           &SplitNode{},
 	"merge":           &MergeNode{},
 	"function":        &FunctionNode{},
+	"sort":            &SortNode{},
+	"csv-parser":      &CSVParserNode{},
+	"regex-extract":   &RegexExtractNode{},
+	"switch":          &SwitchNode{},
+	"error-handler":   &ErrorHandlerNode{},
+	"stop":            &StopNode{},
+	"email":           &EmailNode{},
+	"telegram":        &TelegramNode{},
 }
