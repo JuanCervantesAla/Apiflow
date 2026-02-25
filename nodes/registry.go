@@ -11,4 +11,11 @@ var Registry = map[string]NodeHandler{
 	"transform-data":  &TransformDataNode{},
 	"loop":            &LoopNode{},
 	"delay":           &DelayNode{},
+	"gemini":          &GeminiNode{},
+	"gpt":             &GPTNode{},
+	"claude":          &ClaudeNode{},
+	"filter":          &FilterNode{},
+	"split":           &SplitNode{},
+	"merge":           &MergeNode{},
+	"function":        &FunctionNode{},
 }
