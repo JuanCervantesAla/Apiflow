@@ -12,25 +12,48 @@ const (
 )
 
 var AllowedCategoryTransitions = map[string][]string{
-	string(models.CategoryTrigger): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
-	string(models.CategoryData):    {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
-	string(models.CategoryLogic):   {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
-	string(models.CategoryIO):      {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
-	string(models.CategoryControl): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl)},
-	"":                             {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), ""}, // Para custom/sin categoría
+	string(models.CategoryTrigger):     {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
+	string(models.CategoryData):        {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
+	string(models.CategoryLogic):       {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
+	string(models.CategoryIO):          {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
+	string(models.CategoryControl):     {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
+	string(models.CategoryIntegration): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
+	"":                                {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), ""}, // Para custom/sin categoría
 }
 
 var AllowedNodeTypes = map[string]bool{
+	// Triggers
 	"manual-trigger":  true,
 	"webhook-trigger": true,
+	// Data Processing
 	"set-data":        true,
 	"transform-data":  true,
 	"json-parser":     true,
+	"filter":          true,
+	"split":           true,
+	"merge":           true,
+	"function":        true,
+	"sort":            true,
+	"csv-parser":      true,
+	"regex-extract":   true,
+	// Logic & Control
 	"if-condition":    true,
-	"http-request":    true,
-	"log":             true,
+	"switch":          true,
+	"error-handler":   true,
+	"stop":            true,
 	"loop":            true,
 	"delay":           true,
+	// IO
+	"http-request":    true,
+	"log":             true,
+	// AI
+	"gemini":          true,
+	"gpt":             true,
+	"claude":          true,
+	// Integration
+	"email":           true,
+	"telegram":        true,
+	// Custom
 	"custom":          true,
 }
 
