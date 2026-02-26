@@ -26,4 +26,5 @@ var Registry = map[string]NodeHandler{
 	"stop":            &StopNode{},
 	"email":           &EmailNode{},
 	"telegram":        &TelegramNode{},
+	"database":        &DatabaseNode{},
 }

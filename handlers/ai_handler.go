@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"capyflow/api/helpers"
 	"capyflow/api/models"
+	"capyflow/api/services"
+	"capyflow/api/validators"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -17,12 +20,16 @@ type AIGenerateFlowRequest struct {
 	Description string `json:"description" binding:"required"`
 	Context     string `json:"context"`
 	APIKey      string `json:"apiKey,omitempty"`
+	FlowID      string `json:"flowId,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
 }
 
 type AIRepairFlowRequest struct {
-	Flow   map[string]interface{} `json:"flow" binding:"required"`
-	Issues string                 `json:"issues"`
-	APIKey string                 `json:"apiKey,omitempty"`
+	Flow      map[string]interface{} `json:"flow" binding:"required"`
+	Issues    string                 `json:"issues"`
+	APIKey    string                 `json:"apiKey,omitempty"`
+	FlowID    string                 `json:"flowId,omitempty"`
+	SessionID string                 `json:"sessionId,omitempty"`
 }
 
 // Gemini API structures
@@ -71,11 +78,15 @@ type AIGenerateFlowResponse struct {
 }
 
 type AIHandler struct {
-	DB *gorm.DB
+	DB               *gorm.DB
+	analyticsService *services.AnalyticsService
 }
 
 func NewAIHandler(db *gorm.DB) *AIHandler {
-	return &AIHandler{DB: db}
+	return &AIHandler{
+		DB:               db,
+		analyticsService: services.NewAnalyticsService(db),
+	}
 }
 
 func (h *AIHandler) getUserAPIKey(userID interface{}) (string, error) {
@@ -150,7 +161,7 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 		},
 		GenerationConfig: GeminiGenerationConfig{
 			Temperature:      0.7,
-			MaxOutputTokens:  4000,
+			MaxOutputTokens:  8192, // Increased for complex flows
 			ResponseMimeType: "",
 		},
 	}
@@ -230,12 +241,40 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 
 	content := geminiResp.Candidates[0].Content.Parts[0].Text
 
+	// Limpiar la respuesta de Gemini (remover markdown code blocks si existen)
+	cleanedContent := content
+
+	// Buscar JSON dentro de code blocks ```json ... ```
+	if strings.Contains(content, "```json") {
+		start := strings.Index(content, "```json") + 7
+		end := strings.LastIndex(content, "```")
+		if start > 7 && end > start {
+			cleanedContent = strings.TrimSpace(content[start:end])
+		}
+	} else if strings.Contains(content, "```") {
+		// Intentar con code block genérico
+		start := strings.Index(content, "```") + 3
+		end := strings.LastIndex(content, "```")
+		if start > 3 && end > start {
+			cleanedContent = strings.TrimSpace(content[start:end])
+		}
+	}
+
+	// Buscar el primer { y el último } para extraer el JSON
+	if !strings.HasPrefix(strings.TrimSpace(cleanedContent), "{") {
+		firstBrace := strings.Index(cleanedContent, "{")
+		lastBrace := strings.LastIndex(cleanedContent, "}")
+		if firstBrace >= 0 && lastBrace > firstBrace {
+			cleanedContent = strings.TrimSpace(cleanedContent[firstBrace : lastBrace+1])
+		}
+	}
+
 	var flow AIGeneratedFlow
-	if err := json.Unmarshal([]byte(content), &flow); err != nil {
+	if err := json.Unmarshal([]byte(cleanedContent), &flow); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(AIGenerateFlowResponse{
 			Success:     false,
-			Error:       "Failed to parse generated flow",
+			Error:       "Failed to parse generated flow: " + err.Error(),
 			RawResponse: content,
 		})
 		return
@@ -250,6 +289,21 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	// Aplicar validaciones y defaults a los nodos generados
+	processedNodes, err := processAINodes(flow.Nodes)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(AIGenerateFlowResponse{
+			Success:     false,
+			Error:       "Validation error: " + err.Error(),
+			RawResponse: content,
+		})
+		return
+	}
+	flow.Nodes = processedNodes
+
+	fmt.Printf("✅ Flow generated and validated successfully with %d nodes\n", len(flow.Nodes))
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(AIGenerateFlowResponse{
@@ -360,7 +414,7 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 		},
 		GenerationConfig: GeminiGenerationConfig{
 			Temperature:      0.3,
-			MaxOutputTokens:  4000,
+			MaxOutputTokens:  8192, // Increased for complex flows
 			ResponseMimeType: "",
 		},
 	}
@@ -440,6 +494,39 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 
 	content := geminiResp.Candidates[0].Content.Parts[0].Text
 
+	// Limpiar la respuesta de Gemini (remover markdown code blocks si existen)
+	cleanedContent := content
+
+	// Buscar JSON dentro de code blocks ```json ... ```
+	if strings.Contains(content, "```json") {
+		start := strings.Index(content, "```json") + 7
+		end := strings.LastIndex(content, "```")
+		if start > 7 && end > start {
+			cleanedContent = strings.TrimSpace(content[start:end])
+		}
+	} else if strings.Contains(content, "```") {
+		// Intentar con code block genérico
+		start := strings.Index(content, "```") + 3
+		end := strings.LastIndex(content, "```")
+		if start > 3 && end > start {
+			cleanedContent = strings.TrimSpace(content[start:end])
+		}
+	}
+
+	// Buscar el primer { y el último } para extraer el JSON
+	if !strings.HasPrefix(strings.TrimSpace(cleanedContent), "{") {
+		firstBrace := strings.Index(cleanedContent, "{")
+		lastBrace := strings.LastIndex(cleanedContent, "}")
+		if firstBrace >= 0 && lastBrace > firstBrace {
+			cleanedContent = strings.TrimSpace(cleanedContent[firstBrace : lastBrace+1])
+		}
+	}
+
+	// Detectar respuesta truncada (falta el cierre del JSON)
+	openBraces := strings.Count(cleanedContent, "{")
+	closeBraces := strings.Count(cleanedContent, "}")
+	isTruncated := openBraces != closeBraces || !strings.HasSuffix(strings.TrimSpace(cleanedContent), "}")
+
 	var repairedFlow struct {
 		FlowName        string   `json:"flowName"`
 		FlowDescription string   `json:"flowDescription"`
@@ -448,15 +535,57 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 		Fixes           []string `json:"fixes"`
 	}
 
-	if err := json.Unmarshal([]byte(content), &repairedFlow); err != nil {
+	if err := json.Unmarshal([]byte(cleanedContent), &repairedFlow); err != nil {
+		// Log para debugging
+		fmt.Printf("❌ Error parsing repaired flow JSON: %v\n", err)
+		fmt.Printf("📄 Original content length: %d\n", len(content))
+		fmt.Printf("📄 Cleaned content length: %d\n", len(cleanedContent))
+		fmt.Printf("🔢 Braces: open=%d, close=%d, truncated=%v\n", openBraces, closeBraces, isTruncated)
+		fmt.Printf("📄 Cleaned content (last 200 chars): ...%s\n", cleanedContent[max(0, len(cleanedContent)-200):])
+
+		hint := "La IA no devolvió un JSON válido. Intenta de nuevo."
+		if isTruncated {
+			hint = "La respuesta de la IA fue truncada. El flujo es demasiado complejo. Intenta simplificarlo o repáralo manualmente."
+		}
+
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(AIGenerateFlowResponse{
-			Success:     false,
-			Error:       "Failed to parse repaired flow",
-			RawResponse: content,
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":     false,
+			"error":       "Failed to parse repaired flow: " + err.Error(),
+			"rawResponse": content,
+			"cleaned":     cleanedContent,
+			"hint":        hint,
+			"truncated":   isTruncated,
 		})
 		return
 	}
+
+	// Validar que tenga contenido
+	if len(repairedFlow.Nodes) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "El flujo reparado no contiene nodos",
+			"fixes":   repairedFlow.Fixes,
+		})
+		return
+	}
+
+	// Aplicar validaciones y defaults a los nodos reparados
+	processedNodes, err := processAINodes(repairedFlow.Nodes)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Validation error: " + err.Error(),
+			"fixes":   repairedFlow.Fixes,
+		})
+		return
+	}
+	repairedFlow.Nodes = processedNodes
+
+	fmt.Printf("✅ Flow repaired and validated successfully with %d nodes, %d edges, and %d fixes\n",
+		len(repairedFlow.Nodes), len(repairedFlow.Edges), len(repairedFlow.Fixes))
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -470,4 +599,62 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 		"fixes":       repairedFlow.Fixes,
 		"rawResponse": content,
 	})
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// processAINodes aplica validaciones y defaults a los nodos generados por IA
+func processAINodes(nodesAny []any) ([]any, error) {
+	if len(nodesAny) == 0 {
+		return nodesAny, nil
+	}
+
+	// Convertir []any a JSON y luego a []models.Node
+	nodesJSON, err := json.Marshal(nodesAny)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal nodes: %v", err)
+	}
+
+	var nodes []models.Node
+	if err := json.Unmarshal(nodesJSON, &nodes); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal nodes: %v", err)
+	}
+
+	// Aplicar defaults y validar cada nodo
+	for i := range nodes {
+		// Aplicar defaults automáticos
+		if err := validators.ApplyDefaults(&nodes[i]); err != nil {
+			return nil, fmt.Errorf("error applying defaults to node %s: %v", nodes[i].Label, err)
+		}
+
+		// Validar parámetros
+		if err := validators.ValidateNode(&nodes[i]); err != nil {
+			return nil, fmt.Errorf("validation error for node %s: %v", nodes[i].Label, err)
+		}
+	}
+
+	// Convertir de vuelta a []any
+	processedJSON, err := json.Marshal(nodes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal processed nodes: %v", err)
+	}
+
+	var processedNodes []any
+	if err := json.Unmarshal(processedJSON, &processedNodes); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal processed nodes: %v", err)
+	}
+
+	return processedNodes, nil
 }

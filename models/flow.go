@@ -14,15 +14,16 @@ const (
 //Flow Attributes, Node, edges.
 //TODO: Make an user to have various flows, at least 2
 type Flow struct {
-	ID          string     `json:"id" gorm:"primaryKey"`
-	UserID      string     `json:"userId" gorm:"index"`
-	Name        string     `json:"name" gorm:"not null"`
-	Description string     `json:"description"`
-	Status      FlowStatus `json:"status" gorm:"default:draft"`
-	Nodes       []Node     `json:"nodes" gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE"`
-	Edges       []Edge     `json:"edges" gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	ID          string         `json:"id" gorm:"primaryKey"`
+	UserID      string         `json:"userId" gorm:"index"`
+	Name        string         `json:"name" gorm:"not null"`
+	Description string         `json:"description"`
+	Status      FlowStatus     `json:"status" gorm:"default:draft"`
+	Nodes       []Node         `json:"nodes" gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE"`
+	Edges       []Edge         `json:"edges" gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE"`
+	Analytics   *FlowAnalytics `json:"analytics,omitempty" gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
 }
 
 func (Flow) TableName() string {
@@ -31,8 +32,9 @@ func (Flow) TableName() string {
 
 //Request to create a flow
 type FlowCreateRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	Name           string         `json:"name" binding:"required"`
+	Description    string         `json:"description"`
+	CreationMethod CreationMethod `json:"creationMethod,omitempty"` // "manual" or "ai"
 }
 
 //FlowUpdateRequest to update a flow
