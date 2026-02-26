@@ -3,6 +3,7 @@ package routes
 import (
 	"capyflow/api/handlers"
 	"capyflow/api/middleware"
+	"capyflow/api/services"
 	"capyflow/api/websocket"
 	"net/http"
 
@@ -16,6 +17,9 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	// Middleware global CORS
 	router.Use(middleware.CORS)
 
+	// Services
+	analyticsService := services.NewAnalyticsService(db)
+
 	// Handlers
 	flowHandler := handlers.NewFlowHandler(db)
 	execHandler := handlers.NewExecutionHandler(db, hub)
@@ -25,6 +29,7 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	wsHandler := handlers.NewWebSocketHandler(hub)
 	wsTicketHandler := handlers.NewWSTicketHandler()
 	aiHandler := handlers.NewAIHandler(db)
+	analyticsHandler := handlers.NewAnalyticsHandler(analyticsService)
 
 	// API Routes
 	api := router.PathPrefix("/api").Subrouter()
@@ -72,6 +77,22 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	// Node Types
 	protected.HandleFunc("/node-types", nodeTypeHandler.GetAllNodeTypes).Methods("GET")
 	protected.HandleFunc("/node-types/category", nodeTypeHandler.GetNodeTypesByCategory).Methods("GET")
+	protected.HandleFunc("/node-schemas", nodeTypeHandler.GetNodeSchemas).Methods("GET")
+	protected.HandleFunc("/node-schemas/{type}", nodeTypeHandler.GetNodeSchema).Methods("GET")
+
+	// Analytics
+	protected.HandleFunc("/analytics/summary", analyticsHandler.GetAnalyticsSummary).Methods("GET", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}", analyticsHandler.GetFlowAnalytics).Methods("GET", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}/sessions", analyticsHandler.GetFlowSessions).Methods("GET", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}/ai-interactions", analyticsHandler.GetFlowAIInteractions).Methods("GET", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}/sessions/start", analyticsHandler.StartSession).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/analytics/sessions/{sessionId}/end", analyticsHandler.EndSession).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/analytics/sessions/{sessionId}/activity", analyticsHandler.UpdateSessionActivity).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/analytics/sessions/{sessionId}/save", analyticsHandler.IncrementSave).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}/ai-interaction", analyticsHandler.LogAIInteraction).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}/complexity", analyticsHandler.CalculateComplexity).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}/execution", analyticsHandler.UpdateExecutionStats).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/analytics/flows/{id}/update-time", analyticsHandler.UpdateCreationTime).Methods("POST", "OPTIONS")
 
 	// Webhooks (protegidas para obtener URL)
 	protected.HandleFunc("/webhooks/{id}/url", webhookHandler.GetWebhookURL).Methods("GET", "OPTIONS")

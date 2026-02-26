@@ -33,21 +33,21 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	flowID := vars["id"]
 
 	if flowID == "" {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Flow ID is required"})
+		RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "Flow ID is required"})
 		return
 	}
 
 	// Validar que el flow existe
 	var flow models.Flow
 	if err := h.DB.Preload("Nodes").Preload("Edges").First(&flow, "id = ?", flowID).Error; err != nil {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "Flow not found"})
+		RespondJSON(w, http.StatusNotFound, map[string]string{"error": "Flow not found"})
 		return
 	}
 
 	// Leer el body del webhook
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Failed to read request body"})
+		RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "Failed to read request body"})
 		return
 	}
 	defer r.Body.Close()
@@ -77,7 +77,7 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !hasWebhookTrigger {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Flow does not have a webhook trigger"})
+		RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "Flow does not have a webhook trigger"})
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Retornar respuesta inmediata
-	respondJSON(w, http.StatusAccepted, map[string]interface{}{
+	RespondJSON(w, http.StatusAccepted, map[string]interface{}{
 		"message":     "Webhook received and flow execution started",
 		"executionId": executionID,
 		"flowId":      flowID,
@@ -135,14 +135,14 @@ func (h *WebhookHandler) GetWebhookURL(w http.ResponseWriter, r *http.Request) {
 	flowID := vars["id"]
 
 	if flowID == "" {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Flow ID is required"})
+		RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "Flow ID is required"})
 		return
 	}
 
 	// Validar que el flow existe
 	var flow models.Flow
 	if err := h.DB.First(&flow, "id = ?", flowID).Error; err != nil {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "Flow not found"})
+		RespondJSON(w, http.StatusNotFound, map[string]string{"error": "Flow not found"})
 		return
 	}
 
@@ -154,7 +154,7 @@ func (h *WebhookHandler) GetWebhookURL(w http.ResponseWriter, r *http.Request) {
 
 	webhookURL := scheme + "://" + r.Host + "/api/webhooks/" + flowID
 
-	respondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
 		"flowId":     flowID,
 		"webhookUrl": webhookURL,
 		"methods":    []string{"POST", "GET"},
