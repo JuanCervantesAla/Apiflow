@@ -31,7 +31,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Datos inválidos")
+		RespondError(w, http.StatusBadRequest, "Datos inválidos")
 		return
 	}
 
@@ -47,11 +47,26 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.DB.Create(&user).Error; err != nil {
-		respondError(w, http.StatusBadRequest, "Email already registered!")
+		RespondError(w, http.StatusBadRequest, "Email already registered!")
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]string{"message": "User Created!"})
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"userId": user.ID,
+		"email":  user.Email,
+		"exp":    time.Now().Add(time.Hour * 72).Unix(),
+	})
+
+	tokenString, _ := token.SignedString(jwtSecret)
+	RespondJSON(w, http.StatusCreated, map[string]interface{}{
+		"message": "User Created!",
+		"token":   tokenString,
+		"user": map[string]interface{}{
+			"id":    user.ID,
+			"name":  user.Name,
+			"email": user.Email,
+		},
+	})
 }
 
 // LOGIN FUNC
@@ -61,13 +76,13 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusUnauthorized, "User not found")
+		RespondError(w, http.StatusUnauthorized, "User not found")
 		return
 	}
 
 	var user models.User
 	if err := h.DB.First(&user, "email = ?", req.Email).Error; err != nil {
-		respondError(w, http.StatusUnauthorized, "Incorrect password")
+		RespondError(w, http.StatusUnauthorized, "Incorrect password")
 		return
 	}
 
@@ -79,12 +94,32 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 
 	tokenString, _ := token.SignedString(jwtSecret)
-	respondJSON(w, http.StatusOK, map[string]interface{}{
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
 		"token": tokenString,
 		"user": map[string]interface{}{
 			"id":    user.ID,
 			"name":  user.Name,
 			"email": user.Email,
 		},
+	})
+}
+
+func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("userId")
+	if userID == nil {
+		RespondError(w, http.StatusUnauthorized, "Usuario no autenticado")
+		return
+	}
+
+	var user models.User
+	if err := h.DB.First(&user, "id = ?", userID).Error; err != nil {
+		RespondError(w, http.StatusNotFound, "Usuario no encontrado")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, map[string]interface{}{
+		"id":    user.ID,
+		"name":  user.Name,
+		"email": user.Email,
 	})
 }

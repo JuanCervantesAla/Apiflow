@@ -2,79 +2,141 @@ package handlers
 
 import (
 	"capyflow/api/models"
+	"capyflow/api/services"
+	"capyflow/api/websocket"
+	"encoding/json"
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
 )
 
 type ExecutionHandler struct {
-	DB *gorm.DB
+	DB              *gorm.DB
+	ExecutorService *services.ExecutorService
 }
 
-// "Creates the connection"
-func NewExecutionHandler(db *gorm.DB) *ExecutionHandler {
-	return &ExecutionHandler{DB: db}
+// NewExecutionHandler
+func NewExecutionHandler(db *gorm.DB, hub *websocket.Hub) *ExecutionHandler {
+	return &ExecutionHandler{
+		DB:              db,
+		ExecutorService: services.NewExecutorService(hub),
+	}
 }
 
 // ExecuteFlow - POST /api/flows/{id}/execute
 func (h *ExecutionHandler) ExecuteFlow(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
 	vars := mux.Vars(r)
 	flowID := vars["id"]
 
-	//Searches for the flow
 	var flow models.Flow
-	if err := h.DB.Preload("Nodes").Preload("Edges").First(&flow, "id = ?", flowID).Error; err != nil {
-		respondError(w, http.StatusNotFound, "Flujo no encontrado")
+	if err := h.DB.Preload("Nodes").Preload("Edges").
+		First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
+		RespondError(w, http.StatusNotFound, "Flujo no encontrado")
 		return
 	}
 
-	result := h.executeFlowLogic(&flow)
+	execution := models.Execution{
+		ID:          uuid.New().String(),
+		FlowID:      flowID,
+		UserID:      userId,
+		Status:      models.ExecutionStatusRunning,
+		StartedAt:   time.Now(),
+		TriggerType: "manual",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
 
-	respondJSON(w, http.StatusOK, result)
+	if err := h.DB.Create(&execution).Error; err != nil {
+		RespondError(w, http.StatusInternalServerError, "Error al crear registro de ejecución")
+		return
+	}
 
+	result := h.ExecutorService.ExecuteFlow(&flow, userId, execution.ID)
+	now := time.Now()
+
+	resultsJSON, _ := json.Marshal(result.Results)
+	executedNodesJSON, _ := json.Marshal(result.ExecutedNodes)
+
+	execution.Status = models.ExecutionStatus(result.Status)
+	execution.FinishedAt = &now
+	execution.DurationMs = result.DurationMs
+	execution.Results = string(resultsJSON)
+	execution.ExecutedNodes = string(executedNodesJSON)
+	execution.ErrorMessage = result.ErrorMessage
+	execution.UpdatedAt = now
+
+	h.DB.Save(&execution)
+
+	response := map[string]interface{}{
+		"executionId": execution.ID,
+		"result":      result,
+	}
+
+	RespondJSON(w, http.StatusOK, response)
 }
 
-//Execute basic logi of the flow
+// GetFlowExecutions - GET /api/flows/{id}/executions
+func (h *ExecutionHandler) GetFlowExecutions(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
+	vars := mux.Vars(r)
+	flowID := vars["id"]
 
-func (h *ExecutionHandler) executeFlowLogic(flow *models.Flow) map[string]interface{} {
-	startTime := time.Now()
-	executedNodes := []string{}
-
-	//Finds the initial node
-	nodeMap := make(map[string]*models.Node)
-	for i := range flow.Nodes {
-		nodeMap[flow.Nodes[i].ID] = &flow.Nodes[i]
+	var flow models.Flow
+	if err := h.DB.First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
+		RespondError(w, http.StatusNotFound, "Flow no encontrado")
+		return
 	}
 
-	for _, node := range flow.Nodes {
-		//Update status
-		node.Status = models.StatusRunning
-		h.DB.Save(&node)
-
-		//Simulates process
-		time.Sleep(100 * time.Millisecond)
-
-		node.Status = models.StatusSuccess
-		now := time.Now()
-		node.LastRun = &now
-		node.ExecutionTimeMs = 100
-		h.DB.Save(&node)
-
-		executedNodes = append(executedNodes, node.ID)
-
+	var executions []models.Execution
+	if err := h.DB.Where("flow_id = ?", flowID).
+		Order("started_at DESC").
+		Limit(50).
+		Find(&executions).Error; err != nil {
+		RespondError(w, http.StatusInternalServerError, "Error al obtener ejecuciones")
+		return
 	}
 
-	duration := time.Since(startTime)
+	RespondJSON(w, http.StatusOK, executions)
+}
 
-	//Return the results
-	return map[string]interface{}{
-		"status":        "success",
-		"executedNodes": executedNodes,
-		"durationMs":    duration.Milliseconds(),
-		"startedAt":     startTime,
-		"completedAt":   time.Now(),
+// GetExecution - GET /api/executions/{id}
+func (h *ExecutionHandler) GetExecution(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
+	vars := mux.Vars(r)
+	executionID := vars["id"]
+
+	var execution models.Execution
+	if err := h.DB.First(&execution, "id = ? AND user_id = ?", executionID, userId).Error; err != nil {
+		RespondError(w, http.StatusNotFound, "Ejecución no encontrada")
+		return
 	}
 
+	RespondJSON(w, http.StatusOK, execution)
+}
+
+// GetAllExecutions - GET /api/executions (todas las del usuario)
+func (h *ExecutionHandler) GetAllExecutions(w http.ResponseWriter, r *http.Request) {
+	userId, _ := r.Context().Value("userId").(string)
+
+	var executions []struct {
+		models.Execution
+		FlowName string `json:"flowName"`
+	}
+
+	if err := h.DB.Table("executions").
+		Select("executions.*, flows.name as flow_name").
+		Joins("LEFT JOIN flows ON flows.id = executions.flow_id").
+		Where("executions.user_id = ?", userId).
+		Order("executions.started_at DESC").
+		Limit(100).
+		Scan(&executions).Error; err != nil {
+		RespondError(w, http.StatusInternalServerError, "Error al obtener ejecuciones")
+		return
+	}
+
+	RespondJSON(w, http.StatusOK, executions)
 }

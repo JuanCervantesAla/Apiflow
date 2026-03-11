@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"capyflow/api/models"
+	"capyflow/api/services"
+	"capyflow/api/validators"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,11 +15,15 @@ import (
 )
 
 type FlowHandler struct {
-	DB *gorm.DB
+	DB               *gorm.DB
+	analyticsService *services.AnalyticsService
 }
 
 func NewFlowHandler(db *gorm.DB) *FlowHandler {
-	return &FlowHandler{DB: db}
+	return &FlowHandler{
+		DB:               db,
+		analyticsService: services.NewAnalyticsService(db),
+	}
 }
 
 // GetAllFlows - GET /api/flows (solo los del usuario)
@@ -25,10 +32,10 @@ func (h *FlowHandler) GetAllFlows(w http.ResponseWriter, r *http.Request) {
 	var flows []models.Flow
 	result := h.DB.Preload("Nodes").Preload("Edges").Where("user_id = ?", userId).Find(&flows)
 	if result.Error != nil {
-		respondError(w, http.StatusInternalServerError, "Error getting all flows")
+		RespondError(w, http.StatusInternalServerError, "Error getting all flows")
 		return
 	}
-	respondJSON(w, http.StatusOK, flows)
+	RespondJSON(w, http.StatusOK, flows)
 }
 
 // GetFlow - GET /api/flows/{id} (solo si es del usuario)
@@ -41,13 +48,13 @@ func (h *FlowHandler) GetFlow(w http.ResponseWriter, r *http.Request) {
 	result := h.DB.Preload("Nodes").Preload("Edges").First(&flow, "id = ? AND user_id = ?", flowID, userId)
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
-			respondError(w, http.StatusNotFound, "Flujo no encontrado")
+			RespondError(w, http.StatusNotFound, "Flujo no encontrado")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "Error al obtener flujo")
+		RespondError(w, http.StatusInternalServerError, "Error al obtener flujo")
 		return
 	}
-	respondJSON(w, http.StatusOK, flow)
+	RespondJSON(w, http.StatusOK, flow)
 }
 
 // CreateFlow - POST /api/flows (asociado al usuario)
@@ -55,9 +62,16 @@ func (h *FlowHandler) CreateFlow(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 	var req models.FlowCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Incorrect body request format")
+		RespondError(w, http.StatusBadRequest, "Incorrect body request format")
 		return
 	}
+
+	// Default to manual if not specified
+	creationMethod := req.CreationMethod
+	if creationMethod == "" {
+		creationMethod = models.CreationMethodManual
+	}
+
 	flow := models.Flow{
 		ID:          uuid.New().String(),
 		UserID:      userId,
@@ -68,10 +82,18 @@ func (h *FlowHandler) CreateFlow(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   time.Now(),
 	}
 	if err := h.DB.Create(&flow).Error; err != nil {
-		respondError(w, http.StatusInternalServerError, "Error creating flow")
+		RespondError(w, http.StatusInternalServerError, "Error creating flow")
 		return
 	}
-	respondJSON(w, http.StatusCreated, flow)
+
+	// Create analytics for the flow
+	if _, err := h.analyticsService.CreateFlowAnalytics(flow.ID, creationMethod); err != nil {
+		// Log error but don't fail flow creation
+		// In production, you might want to use a proper logger
+		println("Warning: Failed to create analytics for flow:", flow.ID)
+	}
+
+	RespondJSON(w, http.StatusCreated, flow)
 }
 
 // UpdateFlow - PUT /api/flows/{id} (solo si es del usuario)
@@ -82,13 +104,13 @@ func (h *FlowHandler) UpdateFlow(w http.ResponseWriter, r *http.Request) {
 
 	var req models.FlowUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid data")
+		RespondError(w, http.StatusBadRequest, "Invalid data")
 		return
 	}
 
 	var flow models.Flow
 	if err := h.DB.First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
-		respondError(w, http.StatusBadRequest, "Flow not found")
+		RespondError(w, http.StatusBadRequest, "Flow not found")
 		return
 	}
 
@@ -104,9 +126,9 @@ func (h *FlowHandler) UpdateFlow(w http.ResponseWriter, r *http.Request) {
 	flow.UpdatedAt = time.Now()
 
 	if err := h.DB.Save(&flow).Error; err != nil {
-		respondError(w, http.StatusInternalServerError, "Error updating flow")
+		RespondError(w, http.StatusInternalServerError, "Error updating flow")
 	}
-	respondJSON(w, http.StatusOK, flow)
+	RespondJSON(w, http.StatusOK, flow)
 }
 
 // DeleteFlow - DELETE /api/flows/{id} (solo si es del usuario)
@@ -117,14 +139,14 @@ func (h *FlowHandler) DeleteFlow(w http.ResponseWriter, r *http.Request) {
 
 	result := h.DB.Delete(&models.Flow{}, "id = ? AND user_id = ?", flowID, userId)
 	if result.Error != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to delete flow")
+		RespondError(w, http.StatusInternalServerError, "Failed to delete flow")
 		return
 	}
 	if result.RowsAffected == 0 {
-		respondError(w, http.StatusNotFound, "Flow not found")
+		RespondError(w, http.StatusNotFound, "Flow not found")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]string{"message": "Flow deleted"})
+	RespondJSON(w, http.StatusOK, map[string]string{"message": "Flow deleted"})
 }
 
 // SaveFlowData - POST /api/flows/{id}/save (solo si es del usuario)
@@ -138,54 +160,93 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 		Edges []models.Edge `json:"edges"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid data")
+		RespondError(w, http.StatusBadRequest, "Invalid data")
 		return
 	}
 
 	var flow models.Flow
 	if err := h.DB.First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
-		respondError(w, http.StatusNotFound, "Flow not found")
+		RespondError(w, http.StatusNotFound, "Flow not found")
 		return
 	}
 
 	h.DB.Where("flow_id = ?", flowID).Delete(&models.Node{})
 	h.DB.Where("flow_id = ?", flowID).Delete(&models.Edge{})
 
+	// Crear un mapa para traducir IDs de nodos (para mantener las referencias en edges)
+	idMap := make(map[string]string)
+
+	// Aplicar defaults y validar nodos antes de guardar
 	for i := range payload.Nodes {
+		// Generar un nuevo UUID único para cada nodo
+		oldID := payload.Nodes[i].ID
+		newID := uuid.New().String()
+		idMap[oldID] = newID
+		payload.Nodes[i].ID = newID
+
 		payload.Nodes[i].FlowID = flowID
 		payload.Nodes[i].CreatedAt = time.Now()
 		payload.Nodes[i].UpdatedAt = time.Now()
+
+		// Aplicar defaults automáticos
+		if err := validators.ApplyDefaults(&payload.Nodes[i]); err != nil {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Error applying defaults to node %s: %v", payload.Nodes[i].Label, err))
+			return
+		}
+
+		// Validar parámetros
+		if err := validators.ValidateNode(&payload.Nodes[i]); err != nil {
+			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Validation error: %v", err))
+			return
+		}
 	}
 	if len(payload.Nodes) > 0 {
 		if err := h.DB.Create(&payload.Nodes).Error; err != nil {
-			respondError(w, http.StatusInternalServerError, "Error to save nodes")
+			RespondError(w, http.StatusInternalServerError, "Error to save nodes")
 			return
 		}
 	}
 	for i := range payload.Edges {
+		// Actualizar las referencias de source y target con los nuevos IDs
+		if newSource, ok := idMap[payload.Edges[i].Source]; ok {
+			payload.Edges[i].Source = newSource
+		}
+		if newTarget, ok := idMap[payload.Edges[i].Target]; ok {
+			payload.Edges[i].Target = newTarget
+		}
+
+		// Generar un nuevo UUID único para cada edge
+		payload.Edges[i].ID = uuid.New().String()
+
 		payload.Edges[i].FlowID = flowID
 		payload.Edges[i].CreatedAt = time.Now()
 		payload.Edges[i].UpdatedAt = time.Now()
+		// Debug: imprimir qué edges llegan
+		println("DEBUG Edge recibido:", payload.Edges[i].ID)
+		println("  Source:", payload.Edges[i].Source)
+		println("  Target:", payload.Edges[i].Target)
+		println("  SourceHandle:", payload.Edges[i].SourceHandle)
+		println("  TargetHandle:", payload.Edges[i].TargetHandle)
 	}
 	if len(payload.Edges) > 0 {
 		if err := h.DB.Create(&payload.Edges).Error; err != nil {
-			respondError(w, http.StatusInternalServerError, "Error to save edges")
+			RespondError(w, http.StatusInternalServerError, "Error to save edges")
 			return
 		}
 	}
 	flow.UpdatedAt = time.Now()
 	h.DB.Save(&flow)
-	respondJSON(w, http.StatusOK, map[string]string{"message": "Flow saved"})
+	RespondJSON(w, http.StatusOK, map[string]string{"message": "Flow saved"})
 }
 
-// Helper to return the response with the status
-func respondJSON(w http.ResponseWriter, status int, payload interface{}) {
+// RespondJSON is a helper to return the response with the status
+func RespondJSON(w http.ResponseWriter, status int, payload interface{}) {
 	response, _ := json.Marshal(payload)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	w.Write(response)
 }
 
-func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, map[string]string{"error": message})
+func RespondError(w http.ResponseWriter, status int, message string) {
+	RespondJSON(w, status, map[string]string{"error": message})
 }

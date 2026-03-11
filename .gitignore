@@ -1,0 +1,44 @@
+# Environment variables (contienen secretos)
+.env
+.env.local
+.env.*.local
+
+# Ejecutables compilados
+*.exe
+*.exe~
+api
+api.exe
+bin/
+
+# Archivos de base de datos
+*.db
+*.sqlite
+*.sqlite3
+capyflow.db
+
+# Binarios de Go
+*.out
+*.test
+
+# Dependencias de Go
+vendor/
+
+# IDEs y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporales
+tmp/
+temp/
+*.tmp

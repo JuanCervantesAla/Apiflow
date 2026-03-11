@@ -8,16 +8,24 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtSecret = []byte("supersecretkey") //Same as handler
+var jwtSecret = []byte("supersecretkey")
 
 func JWTAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var tokenStr string
+
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		if strings.HasPrefix(auth, "Bearer ") {
+			tokenStr = strings.TrimPrefix(auth, "Bearer ")
+		} else {
+			tokenStr = r.URL.Query().Get("token")
+		}
+
+		if tokenStr == "" {
 			http.Error(w, "Not authorized", http.StatusUnauthorized)
 			return
 		}
-		tokenStr := strings.TrimPrefix(auth, "Bearer ")
+
 		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 			return jwtSecret, nil
 		})
