@@ -8,9 +8,16 @@ import (
 	"capyflow/api/websocket"
 	"log"
 	"net/http"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found, using environment variables")
+	}
+
 	cfg := config.LoadConfig()
 
 	db, err := database.InitDB(cfg.DatabasePath)

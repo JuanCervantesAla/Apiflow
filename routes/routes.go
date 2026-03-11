@@ -51,11 +51,6 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	// User
 	protected.HandleFunc("/me", userHandler.GetMe).Methods("GET", "OPTIONS")
 
-	// User API Keys
-	protected.HandleFunc("/user/api-key", userHandler.GetGeminiAPIKey).Methods("GET", "OPTIONS")
-	protected.HandleFunc("/user/api-key", userHandler.SaveGeminiAPIKey).Methods("POST", "OPTIONS")
-	protected.HandleFunc("/user/api-key", userHandler.DeleteGeminiAPIKey).Methods("DELETE", "OPTIONS")
-
 	// AI Generation
 	protected.HandleFunc("/ai/generate-flow", aiHandler.GenerateFlowWithAI).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/ai/repair-flow", aiHandler.RepairFlowWithAI).Methods("POST", "OPTIONS")
