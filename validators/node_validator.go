@@ -73,6 +73,18 @@ var NodeSchemas = map[string]NodeSchema{
 			},
 		},
 	},
+	// JSON Parser
+	"json-parser": {
+		Type:     "json-parser",
+		Required: []string{"json"},
+		Parameters: map[string]ParameterSchema{
+			"json": {
+				Type:        "string",
+				Required:    true,
+				Description: "JSON string to parse",
+			},
+		},
+	},
 	"if-condition": {
 		Type:     "if-condition",
 		Required: []string{"left", "operator", "right"},
@@ -205,23 +217,23 @@ var NodeSchemas = map[string]NodeSchema{
 			},
 		},
 	},
-	"gemini": {
-		Type:     "gemini",
+	"groq": {
+		Type:     "groq",
 		Required: []string{"prompt"},
 		Parameters: map[string]ParameterSchema{
 			"prompt": {
 				Type:        "string",
 				Required:    true,
-				Description: "The prompt to send to Gemini",
-				Example:     "Generate ideas about: {{input}}",
+				Description: "The prompt to send to Groq",
+				Example:     "Analyze this data: {{input}}",
 				Advanced:    false, // BÁSICO
 			},
 			"model": {
 				Type:        "string",
 				Required:    false,
-				Default:     "gemini-pro",
-				Enum:        []interface{}{"gemini-pro", "gemini-pro-vision"},
-				Description: "Gemini model to use",
+				Default:     "llama-3.3-70b-versatile",
+				Enum:        []interface{}{"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"},
+				Description: "Groq model to use (API key configured in .env)",
 				Advanced:    true, // AVANZADO
 			},
 			"temperature": {
@@ -229,17 +241,24 @@ var NodeSchemas = map[string]NodeSchema{
 				Required:    false,
 				Default:     0.7,
 				Min:         floatPtr(0.0),
-				Max:         floatPtr(1.0),
-				Description: "Randomness of the output (0-1)",
+				Max:         floatPtr(2.0),
+				Description: "Randomness of the output (0-2)",
 				Advanced:    true, // AVANZADO
 			},
-			"max_tokens": {
+			"maxTokens": {
 				Type:        "number",
 				Required:    false,
-				Default:     1000,
+				Default:     1024,
 				Min:         floatPtr(1),
-				Max:         floatPtr(2048),
+				Max:         floatPtr(32768),
 				Description: "Maximum tokens in response",
+				Advanced:    true, // AVANZADO
+			},
+			"systemPrompt": {
+				Type:        "string",
+				Required:    false,
+				Description: "System prompt to set context/instructions",
+				Example:     "You are a helpful assistant that analyzes data.",
 				Advanced:    true, // AVANZADO
 			},
 		},
@@ -423,11 +442,220 @@ var NodeSchemas = map[string]NodeSchema{
 			},
 		},
 	},
+	// Split
+	"split": {
+		Type:     "split",
+		Required: []string{"array", "chunkSize"},
+		Parameters: map[string]ParameterSchema{
+			"array": {
+				Type:        "array",
+				Required:    true,
+				Description: "Array to split into chunks",
+			},
+			"chunkSize": {
+				Type:        "number",
+				Required:    true,
+				Min:         floatPtr(1),
+				Description: "Size of each chunk",
+			},
+		},
+	},
+	// Merge
+	"merge": {
+		Type:     "merge",
+		Required: []string{"arrays"},
+		Parameters: map[string]ParameterSchema{
+			"arrays": {
+				Type:        "array",
+				Required:    true,
+				Description: "Arrays to merge",
+			},
+		},
+	},
+	// Function (JavaScript execution)
+	"function": {
+		Type:     "function",
+		Required: []string{"code"},
+		Parameters: map[string]ParameterSchema{
+			"code": {
+				Type:        "string",
+				Required:    true,
+				Description: "JavaScript code to execute",
+				Example:     "return input * 2;",
+			},
+		},
+	},
+	// Sort
+	"sort": {
+		Type:     "sort",
+		Required: []string{"array", "field"},
+		Parameters: map[string]ParameterSchema{
+			"array": {
+				Type:        "array",
+				Required:    true,
+				Description: "Array to sort",
+			},
+			"field": {
+				Type:        "string",
+				Required:    true,
+				Description: "Field to sort by",
+			},
+			"order": {
+				Type:        "string",
+				Required:    false,
+				Default:     "asc",
+				Enum:        []interface{}{"asc", "desc"},
+				Description: "Sort order",
+			},
+		},
+	},
+	// CSV Parser
+	"csv-parser": {
+		Type:     "csv-parser",
+		Required: []string{"input"},
+		Parameters: map[string]ParameterSchema{
+			"input": {
+				Type:        "string",
+				Required:    true,
+				Description: "CSV string to parse",
+			},
+			"delimiter": {
+				Type:        "string",
+				Required:    false,
+				Default:     ",",
+				Description: "CSV delimiter character",
+			},
+			"hasHeader": {
+				Type:        "boolean",
+				Required:    false,
+				Default:     true,
+				Description: "First row contains headers",
+			},
+		},
+	},
+	// Regex Extract
+	"regex-extract": {
+		Type:     "regex-extract",
+		Required: []string{"input", "pattern"},
+		Parameters: map[string]ParameterSchema{
+			"input": {
+				Type:        "string",
+				Required:    true,
+				Description: "Input string to extract from",
+			},
+			"pattern": {
+				Type:        "string",
+				Required:    true,
+				Description: "Regular expression pattern",
+				Example:     "[0-9]+",
+			},
+			"group": {
+				Type:        "number",
+				Required:    false,
+				Default:     0,
+				Description: "Capture group to extract (0 for full match)",
+			},
+		},
+	},
+	// Switch (multiple conditions)
+	"switch": {
+		Type:     "switch",
+		Required: []string{"value", "cases"},
+		Parameters: map[string]ParameterSchema{
+			"value": {
+				Type:        "string",
+				Required:    true,
+				Description: "Value to match",
+			},
+			"cases": {
+				Type:        "array",
+				Required:    true,
+				Description: "Array of {value, output} cases",
+			},
+			"default": {
+				Type:        "string",
+				Required:    false,
+				Description: "Default output if no match",
+			},
+		},
+	},
+	// Error Handler
+	"error-handler": {
+		Type:     "error-handler",
+		Required: []string{},
+		Parameters: map[string]ParameterSchema{
+			"retry": {
+				Type:        "boolean",
+				Required:    false,
+				Default:     false,
+				Description: "Retry on error",
+			},
+			"maxRetries": {
+				Type:        "number",
+				Required:    false,
+				Default:     3,
+				Min:         floatPtr(1),
+				Max:         floatPtr(10),
+				Description: "Maximum retry attempts",
+			},
+			"fallbackValue": {
+				Type:        "string",
+				Required:    false,
+				Description: "Fallback value on error",
+			},
+		},
+	},
+	// Stop
+	"stop": {
+		Type:     "stop",
+		Required: []string{},
+		Parameters: map[string]ParameterSchema{
+			"message": {
+				Type:        "string",
+				Required:    false,
+				Description: "Stop message",
+			},
+		},
+	},
+	// Manual Trigger
+	"manual-trigger": {
+		Type:       "manual-trigger",
+		Required:   []string{},
+		Parameters: map[string]ParameterSchema{},
+	},
+	// Webhook Trigger
+	"webhook-trigger": {
+		Type:     "webhook-trigger",
+		Required: []string{},
+		Parameters: map[string]ParameterSchema{
+			"method": {
+				Type:        "string",
+				Required:    false,
+				Default:     "POST",
+				Enum:        []interface{}{"GET", "POST", "PUT", "DELETE"},
+				Description: "HTTP method",
+			},
+			"path": {
+				Type:        "string",
+				Required:    false,
+				Description: "Webhook path",
+			},
+		},
+	},
 }
 
 // Helper function
 func floatPtr(f float64) *float64 {
 	return &f
+}
+
+// getRegisteredNodeTypes retorna la lista de tipos de nodos válidos
+func getRegisteredNodeTypes() []string {
+	types := make([]string, 0, len(NodeSchemas))
+	for nodeType := range NodeSchemas {
+		types = append(types, nodeType)
+	}
+	return types
 }
 
 // GetNodeSchema devuelve el schema de un tipo de nodo (para el frontend)
@@ -526,8 +754,9 @@ func ApplyDefaults(node *models.Node) error {
 func ValidateNode(node *models.Node) error {
 	schema, exists := NodeSchemas[node.Type]
 	if !exists {
-		// Si no hay schema, permitir (nodos sin validación estricta)
-		return nil
+		// RECHAZAR nodos con tipos no registrados
+		return fmt.Errorf("node type '%s' is not registered in NodeSchemas. Valid types are: %v",
+			node.Type, getRegisteredNodeTypes())
 	}
 
 	if node.Parameters == "" {

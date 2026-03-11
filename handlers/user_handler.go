@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"capyflow/api/helpers"
 	"capyflow/api/models"
 	"encoding/json"
 	"net/http"
@@ -118,108 +117,9 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if user has API key configured
-	hasAPIKey := user.GeminiAPIKey != ""
-
 	RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"id":        user.ID,
-		"name":      user.Name,
-		"email":     user.Email,
-		"hasAPIKey": hasAPIKey,
-	})
-}
-
-// SaveGeminiAPIKey saves or updates the user's Gemini API key (encrypted)
-func (h *UserHandler) SaveGeminiAPIKey(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userId")
-	if userID == nil {
-		RespondError(w, http.StatusUnauthorized, "Usuario no autenticado")
-		return
-	}
-
-	var req struct {
-		APIKey string `json:"apiKey"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Datos inválidos")
-		return
-	}
-
-	if req.APIKey == "" {
-		RespondError(w, http.StatusBadRequest, "API key no puede estar vacía")
-		return
-	}
-
-	// Encrypt the API key
-	encrypted, err := helpers.EncryptString(req.APIKey)
-	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al encriptar la API key")
-		return
-	}
-
-	// Update user
-	if err := h.DB.Model(&models.User{}).Where("id = ?", userID).Update("gemini_api_key", encrypted).Error; err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al guardar la API key")
-		return
-	}
-
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "API key guardada exitosamente",
-		"success": true,
-	})
-}
-
-// DeleteGeminiAPIKey removes the user's stored API key
-func (h *UserHandler) DeleteGeminiAPIKey(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userId")
-	if userID == nil {
-		RespondError(w, http.StatusUnauthorized, "Usuario no autenticado")
-		return
-	}
-
-	if err := h.DB.Model(&models.User{}).Where("id = ?", userID).Update("gemini_api_key", "").Error; err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al eliminar la API key")
-		return
-	}
-
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "API key eliminada exitosamente",
-		"success": true,
-	})
-}
-
-// GetGeminiAPIKey returns the decrypted API key for the authenticated user
-func (h *UserHandler) GetGeminiAPIKey(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userId")
-	if userID == nil {
-		RespondError(w, http.StatusUnauthorized, "Usuario no autenticado")
-		return
-	}
-
-	var user models.User
-	if err := h.DB.First(&user, "id = ?", userID).Error; err != nil {
-		RespondError(w, http.StatusNotFound, "Usuario no encontrado")
-		return
-	}
-
-	if user.GeminiAPIKey == "" {
-		RespondJSON(w, http.StatusOK, map[string]interface{}{
-			"apiKey": nil,
-			"hasKey": false,
-		})
-		return
-	}
-
-	// Decrypt the API key
-	decrypted, err := helpers.DecryptString(user.GeminiAPIKey)
-	if err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al desencriptar la API key")
-		return
-	}
-
-	RespondJSON(w, http.StatusOK, map[string]interface{}{
-		"apiKey": decrypted,
-		"hasKey": true,
+		"id":    user.ID,
+		"name":  user.Name,
+		"email": user.Email,
 	})
 }

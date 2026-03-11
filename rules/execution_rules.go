@@ -18,7 +18,7 @@ var AllowedCategoryTransitions = map[string][]string{
 	string(models.CategoryIO):          {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
 	string(models.CategoryControl):     {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
 	string(models.CategoryIntegration): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
-	"":                                {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), ""}, // Para custom/sin categoría
+	"":                                 {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), ""}, // Para custom/sin categoría
 }
 
 var AllowedNodeTypes = map[string]bool{
@@ -26,35 +26,35 @@ var AllowedNodeTypes = map[string]bool{
 	"manual-trigger":  true,
 	"webhook-trigger": true,
 	// Data Processing
-	"set-data":        true,
-	"transform-data":  true,
-	"json-parser":     true,
-	"filter":          true,
-	"split":           true,
-	"merge":           true,
-	"function":        true,
-	"sort":            true,
-	"csv-parser":      true,
-	"regex-extract":   true,
+	"set-data":       true,
+	"transform-data": true,
+	"json-parser":    true,
+	"filter":         true,
+	"split":          true,
+	"merge":          true,
+	"function":       true,
+	"sort":           true,
+	"csv-parser":     true,
+	"regex-extract":  true,
 	// Logic & Control
-	"if-condition":    true,
-	"switch":          true,
-	"error-handler":   true,
-	"stop":            true,
-	"loop":            true,
-	"delay":           true,
+	"if-condition":  true,
+	"switch":        true,
+	"error-handler": true,
+	"stop":          true,
+	"loop":          true,
+	"delay":         true,
 	// IO
-	"http-request":    true,
-	"log":             true,
+	"http-request": true,
+	"log":          true,
 	// AI
-	"gemini":          true,
-	"gpt":             true,
-	"claude":          true,
+	"groq":   true,
+	"gpt":    true,
+	"claude": true,
 	// Integration
-	"email":           true,
-	"telegram":        true,
+	"email":    true,
+	"telegram": true,
 	// Custom
-	"custom":          true,
+	"custom": true,
 }
 
 func ValidateFlow(flow *models.Flow) error {

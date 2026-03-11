@@ -173,8 +173,17 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 	h.DB.Where("flow_id = ?", flowID).Delete(&models.Node{})
 	h.DB.Where("flow_id = ?", flowID).Delete(&models.Edge{})
 
+	// Crear un mapa para traducir IDs de nodos (para mantener las referencias en edges)
+	idMap := make(map[string]string)
+
 	// Aplicar defaults y validar nodos antes de guardar
 	for i := range payload.Nodes {
+		// Generar un nuevo UUID único para cada nodo
+		oldID := payload.Nodes[i].ID
+		newID := uuid.New().String()
+		idMap[oldID] = newID
+		payload.Nodes[i].ID = newID
+
 		payload.Nodes[i].FlowID = flowID
 		payload.Nodes[i].CreatedAt = time.Now()
 		payload.Nodes[i].UpdatedAt = time.Now()
@@ -198,6 +207,17 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for i := range payload.Edges {
+		// Actualizar las referencias de source y target con los nuevos IDs
+		if newSource, ok := idMap[payload.Edges[i].Source]; ok {
+			payload.Edges[i].Source = newSource
+		}
+		if newTarget, ok := idMap[payload.Edges[i].Target]; ok {
+			payload.Edges[i].Target = newTarget
+		}
+
+		// Generar un nuevo UUID único para cada edge
+		payload.Edges[i].ID = uuid.New().String()
+
 		payload.Edges[i].FlowID = flowID
 		payload.Edges[i].CreatedAt = time.Now()
 		payload.Edges[i].UpdatedAt = time.Now()
