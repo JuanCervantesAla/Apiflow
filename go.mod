@@ -29,6 +29,8 @@ require (
 	github.com/lib/pq v1.11.2 // indirect
 	github.com/mattn/go-sqlite3 v1.14.34 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/sendgrid/rest v2.6.9+incompatible // indirect
+	github.com/sendgrid/sendgrid-go v3.16.1+incompatible // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 )

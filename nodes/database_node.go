@@ -17,22 +17,22 @@ type DatabaseNode struct{}
 
 type DatabaseParams struct {
 	Driver         string                 `json:"driver"`         // "postgres", "mysql", "sqlite3"
-	ConnectionURL  string                 `json:"connectionUrl"`  // URL de conexión a la base de datos
-	Query          string                 `json:"query"`          // SQL query a ejecutar
-	Timeout        int                    `json:"timeout"`        // Timeout en ms (default: 30000)
-	MaxRetries     int                    `json:"maxRetries"`     // Número de reintentos en caso de error
-	RetryDelay     int                    `json:"retryDelay"`     // Delay entre reintentos en ms
-	QueryParams    map[string]interface{} `json:"queryParams"`    // Parámetros para query parametrizada
-	ReturnMetadata bool                   `json:"returnMetadata"` // Si true, incluye metadata de la query
+	ConnectionURL  string                 `json:"connectionUrl"`  // Database connection URL
+	Query          string                 `json:"query"`          // SQL query to execute
+	Timeout        int                    `json:"timeout"`        // Timeout in ms (default: 30000)
+	MaxRetries     int                    `json:"maxRetries"`     // Number of retries on error
+	RetryDelay     int                    `json:"retryDelay"`     // Delay between retries in ms
+	QueryParams    map[string]interface{} `json:"queryParams"`    // Parameters for parameterized query
+	ReturnMetadata bool                   `json:"returnMetadata"` // If true, includes query metadata
 }
 
 type DatabaseResult struct {
 	Rows          []map[string]interface{} `json:"rows"`
 	RowCount      int                      `json:"rowCount"`
-	AffectedRows  int64                    `json:"affectedRows,omitempty"` // Para INSERT/UPDATE/DELETE
-	LastInsertID  int64                    `json:"lastInsertId,omitempty"` // Para INSERT
-	ExecutionTime int64                    `json:"executionTime"`          // Tiempo de ejecución en ms
-	Query         string                   `json:"query,omitempty"`        // Query ejecutada (si returnMetadata=true)
+	AffectedRows  int64                    `json:"affectedRows,omitempty"` // For INSERT/UPDATE/DELETE
+	LastInsertID  int64                    `json:"lastInsertId,omitempty"` // For INSERT
+	ExecutionTime int64                    `json:"executionTime"`          // Execution time in ms
+	Query         string                   `json:"query,omitempty"`        // Executed query (if returnMetadata=true)
 }
 
 func (n *DatabaseNode) Execute(
@@ -45,7 +45,7 @@ func (n *DatabaseNode) Execute(
 		return nil, fmt.Errorf("invalid database parameters: %v", err)
 	}
 
-	// Validaciones básicas
+	// Basic validations
 	if params.Driver == "" {
 		return nil, fmt.Errorf("driver is required (postgres, mysql, or sqlite3)")
 	}
@@ -56,25 +56,25 @@ func (n *DatabaseNode) Execute(
 		return nil, fmt.Errorf("query is required")
 	}
 
-	// Aplicar defaults
+	// Apply defaults
 	if params.Timeout <= 0 {
-		params.Timeout = 30000 // 30 segundos
+		params.Timeout = 30000 // 30 seconds
 	}
 	if params.MaxRetries < 0 {
 		params.MaxRetries = 0
 	}
 	if params.MaxRetries > 5 {
-		params.MaxRetries = 5 // Límite de seguridad
+		params.MaxRetries = 5 // Safety limit
 	}
 	if params.RetryDelay <= 0 {
-		params.RetryDelay = 1000 // 1 segundo
+		params.RetryDelay = 1000 // 1 second
 	}
 
-	// Interpolar variables en la query
+	// Interpolate variables in the query
 	query := interpolateString(params.Query, prev)
 	connectionURL := interpolateString(params.ConnectionURL, prev)
 
-	// Interpolar parámetros de query
+	// Interpolate query parameters
 	interpolatedParams := make(map[string]interface{})
 	for key, value := range params.QueryParams {
 		if strVal, ok := value.(string); ok {
@@ -84,7 +84,7 @@ func (n *DatabaseNode) Execute(
 		}
 	}
 
-	// Ejecutar con reintentos
+	// Execute with retries
 	var result DatabaseResult
 	var lastErr error
 
@@ -105,10 +105,10 @@ func (n *DatabaseNode) Execute(
 		)
 
 		if lastErr == nil {
-			break // Éxito
+			break // Success
 		}
 
-		// Si es el último intento, retornar el error
+		// If this is the last attempt, return the error
 		if attempt == params.MaxRetries {
 			return nil, fmt.Errorf("database query failed after %d attempts: %v", attempt+1, lastErr)
 		}
@@ -116,12 +116,12 @@ func (n *DatabaseNode) Execute(
 
 	result.ExecutionTime = time.Since(startTime).Milliseconds()
 
-	// Agregar metadata si se solicita
+	// Add metadata if requested
 	if params.ReturnMetadata {
 		result.Query = query
 	}
 
-	// Convertir result a map[string]interface{}
+	// Convert result to map[string]interface{}
 	resultMap := map[string]interface{}{
 		"rows":          result.Rows,
 		"rowCount":      result.RowCount,
@@ -141,7 +141,7 @@ func (n *DatabaseNode) Execute(
 	return resultMap, nil
 }
 
-// executeDatabaseQuery ejecuta una query SQL y retorna los resultados
+// executeDatabaseQuery executes a SQL query and returns the results
 func executeDatabaseQuery(
 	driver string,
 	connectionURL string,
@@ -152,37 +152,37 @@ func executeDatabaseQuery(
 
 	var result DatabaseResult
 
-	// Abrir conexión a la base de datos
+	// Open database connection
 	db, err := sql.Open(driver, connectionURL)
 	if err != nil {
 		return result, fmt.Errorf("failed to connect to database: %v", err)
 	}
 	defer db.Close()
 
-	// Configurar timeout de conexión
+	// Configure connection timeout
 	db.SetConnMaxLifetime(time.Duration(timeoutMs) * time.Millisecond)
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 
-	// Verificar conexión
+	// Verify connection
 	if err := db.Ping(); err != nil {
 		return result, fmt.Errorf("failed to ping database: %v", err)
 	}
 
-	// Determinar si es una query de selección o modificación
+	// Determine if it's a select or modification query
 	queryType := strings.ToUpper(strings.TrimSpace(query))
 	isSelect := strings.HasPrefix(queryType, "SELECT") || strings.HasPrefix(queryType, "SHOW") || strings.HasPrefix(queryType, "DESCRIBE")
 
 	if isSelect {
-		// Ejecutar SELECT
+		// Execute SELECT
 		return executeSelectQuery(db, query, params)
 	} else {
-		// Ejecutar INSERT/UPDATE/DELETE
+		// Execute INSERT/UPDATE/DELETE
 		return executeModifyQuery(db, query, params)
 	}
 }
 
-// executeSelectQuery ejecuta una query SELECT y retorna las filas
+// executeSelectQuery executes a SELECT query and returns the rows
 func executeSelectQuery(
 	db *sql.DB,
 	query string,
@@ -191,7 +191,7 @@ func executeSelectQuery(
 
 	var result DatabaseResult
 
-	// Reemplazar parámetros nombrados por valores
+	// Replace named parameters with values
 	args := make([]interface{}, 0)
 	finalQuery := query
 	for key, value := range params {
@@ -202,23 +202,23 @@ func executeSelectQuery(
 		}
 	}
 
-	// Ejecutar query
+	// Execute query
 	rows, err := db.Query(finalQuery, args...)
 	if err != nil {
 		return result, fmt.Errorf("query execution failed: %v", err)
 	}
 	defer rows.Close()
 
-	// Obtener nombres de columnas
+	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
 		return result, fmt.Errorf("failed to get column names: %v", err)
 	}
 
-	// Leer filas
+	// Read rows
 	result.Rows = make([]map[string]interface{}, 0)
 	for rows.Next() {
-		// Crear slice para escanear valores
+		// Create slice to scan values
 		values := make([]interface{}, len(columns))
 		valuePtrs := make([]interface{}, len(columns))
 		for i := range values {
@@ -229,12 +229,12 @@ func executeSelectQuery(
 			return result, fmt.Errorf("failed to scan row: %v", err)
 		}
 
-		// Convertir a map
+		// Convert to map
 		rowMap := make(map[string]interface{})
 		for i, col := range columns {
 			val := values[i]
 
-			// Convertir []byte a string (común en MySQL/PostgreSQL)
+			// Convert []byte to string (common in MySQL/PostgreSQL)
 			if b, ok := val.([]byte); ok {
 				rowMap[col] = string(b)
 			} else {
@@ -254,7 +254,7 @@ func executeSelectQuery(
 	return result, nil
 }
 
-// executeModifyQuery ejecuta INSERT/UPDATE/DELETE y retorna filas afectadas
+// executeModifyQuery executes INSERT/UPDATE/DELETE and returns affected rows
 func executeModifyQuery(
 	db *sql.DB,
 	query string,
@@ -263,7 +263,7 @@ func executeModifyQuery(
 
 	var result DatabaseResult
 
-	// Reemplazar parámetros nombrados por valores
+	// Replace named parameters with values
 	args := make([]interface{}, 0)
 	finalQuery := query
 	for key, value := range params {
@@ -274,19 +274,19 @@ func executeModifyQuery(
 		}
 	}
 
-	// Ejecutar query
+	// Execute query
 	execResult, err := db.Exec(finalQuery, args...)
 	if err != nil {
 		return result, fmt.Errorf("query execution failed: %v", err)
 	}
 
-	// Obtener filas afectadas
+	// Get affected rows
 	affectedRows, err := execResult.RowsAffected()
 	if err == nil {
 		result.AffectedRows = affectedRows
 	}
 
-	// Obtener last insert ID (solo para INSERT)
+	// Get last insert ID (only for INSERT)
 	lastID, err := execResult.LastInsertId()
 	if err == nil && lastID > 0 {
 		result.LastInsertID = lastID

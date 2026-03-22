@@ -26,7 +26,7 @@ func NewFlowHandler(db *gorm.DB) *FlowHandler {
 	}
 }
 
-// GetAllFlows - GET /api/flows (solo los del usuario)
+// GetAllFlows - GET /api/flows (user's flows only)
 func (h *FlowHandler) GetAllFlows(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 	var flows []models.Flow
@@ -38,7 +38,7 @@ func (h *FlowHandler) GetAllFlows(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, flows)
 }
 
-// GetFlow - GET /api/flows/{id} (solo si es del usuario)
+// GetFlow - GET /api/flows/{id} (only if belongs to user)
 func (h *FlowHandler) GetFlow(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 	vars := mux.Vars(r)
@@ -48,16 +48,16 @@ func (h *FlowHandler) GetFlow(w http.ResponseWriter, r *http.Request) {
 	result := h.DB.Preload("Nodes").Preload("Edges").First(&flow, "id = ? AND user_id = ?", flowID, userId)
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
-			RespondError(w, http.StatusNotFound, "Flujo no encontrado")
+			RespondError(w, http.StatusNotFound, "Flow not found")
 			return
 		}
-		RespondError(w, http.StatusInternalServerError, "Error al obtener flujo")
+		RespondError(w, http.StatusInternalServerError, "Error getting flow")
 		return
 	}
 	RespondJSON(w, http.StatusOK, flow)
 }
 
-// CreateFlow - POST /api/flows (asociado al usuario)
+// CreateFlow - POST /api/flows (associated with user)
 func (h *FlowHandler) CreateFlow(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 	var req models.FlowCreateRequest
@@ -96,7 +96,7 @@ func (h *FlowHandler) CreateFlow(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusCreated, flow)
 }
 
-// UpdateFlow - PUT /api/flows/{id} (solo si es del usuario)
+// UpdateFlow - PUT /api/flows/{id} (only if belongs to user)
 func (h *FlowHandler) UpdateFlow(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 	vars := mux.Vars(r)
@@ -131,7 +131,7 @@ func (h *FlowHandler) UpdateFlow(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, flow)
 }
 
-// DeleteFlow - DELETE /api/flows/{id} (solo si es del usuario)
+// DeleteFlow - DELETE /api/flows/{id} (only if belongs to user)
 func (h *FlowHandler) DeleteFlow(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 	vars := mux.Vars(r)
@@ -149,7 +149,7 @@ func (h *FlowHandler) DeleteFlow(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, map[string]string{"message": "Flow deleted"})
 }
 
-// SaveFlowData - POST /api/flows/{id}/save (solo si es del usuario)
+// SaveFlowData - POST /api/flows/{id}/save (only if belongs to user)
 func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 	vars := mux.Vars(r)
@@ -173,12 +173,12 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 	h.DB.Where("flow_id = ?", flowID).Delete(&models.Node{})
 	h.DB.Where("flow_id = ?", flowID).Delete(&models.Edge{})
 
-	// Crear un mapa para traducir IDs de nodos (para mantener las referencias en edges)
+	// Create a map to translate node IDs (to maintain references in edges)
 	idMap := make(map[string]string)
 
-	// Aplicar defaults y validar nodos antes de guardar
+	// Apply defaults and validate nodes before saving
 	for i := range payload.Nodes {
-		// Generar un nuevo UUID único para cada nodo
+		// Generate a new unique UUID for each node
 		oldID := payload.Nodes[i].ID
 		newID := uuid.New().String()
 		idMap[oldID] = newID
@@ -188,13 +188,13 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 		payload.Nodes[i].CreatedAt = time.Now()
 		payload.Nodes[i].UpdatedAt = time.Now()
 
-		// Aplicar defaults automáticos
+		// Apply automatic defaults
 		if err := validators.ApplyDefaults(&payload.Nodes[i]); err != nil {
 			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Error applying defaults to node %s: %v", payload.Nodes[i].Label, err))
 			return
 		}
 
-		// Validar parámetros
+		// Validate parameters
 		if err := validators.ValidateNode(&payload.Nodes[i]); err != nil {
 			RespondError(w, http.StatusBadRequest, fmt.Sprintf("Validation error: %v", err))
 			return
@@ -207,7 +207,7 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for i := range payload.Edges {
-		// Actualizar las referencias de source y target con los nuevos IDs
+		// Update source and target references with new IDs
 		if newSource, ok := idMap[payload.Edges[i].Source]; ok {
 			payload.Edges[i].Source = newSource
 		}
@@ -215,14 +215,14 @@ func (h *FlowHandler) SaveFlowData(w http.ResponseWriter, r *http.Request) {
 			payload.Edges[i].Target = newTarget
 		}
 
-		// Generar un nuevo UUID único para cada edge
+		// Generate a new unique UUID for each edge
 		payload.Edges[i].ID = uuid.New().String()
 
 		payload.Edges[i].FlowID = flowID
 		payload.Edges[i].CreatedAt = time.Now()
 		payload.Edges[i].UpdatedAt = time.Now()
-		// Debug: imprimir qué edges llegan
-		println("DEBUG Edge recibido:", payload.Edges[i].ID)
+		// Debug: print incoming edges
+		println("DEBUG Edge received:", payload.Edges[i].ID)
 		println("  Source:", payload.Edges[i].Source)
 		println("  Target:", payload.Edges[i].Target)
 		println("  SourceHandle:", payload.Edges[i].SourceHandle)

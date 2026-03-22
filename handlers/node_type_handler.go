@@ -17,24 +17,24 @@ func NewNodeTypeHandler(db *gorm.DB) *NodeTypeHandler {
 	return &NodeTypeHandler{DB: db}
 }
 
-// GetAllNodeTypes - Obtiene todos los tipos de nodos disponibles
+// GetAllNodeTypes - Gets all available node types
 func (h *NodeTypeHandler) GetAllNodeTypes(w http.ResponseWriter, r *http.Request) {
 	var nodeTypes []models.NodeType
 
 	if err := h.DB.Where("is_active = ?", true).Order("category, name").Find(&nodeTypes).Error; err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al obtener tipos de nodos")
+		RespondError(w, http.StatusInternalServerError, "Error getting node types")
 		return
 	}
 
 	RespondJSON(w, http.StatusOK, nodeTypes)
 }
 
-// GetNodeTypesByCategory - Obtiene tipos de nodos por categoría
+// GetNodeTypesByCategory - Gets node types by category
 func (h *NodeTypeHandler) GetNodeTypesByCategory(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
 
 	if category == "" {
-		RespondError(w, http.StatusBadRequest, "Categoría no especificada")
+		RespondError(w, http.StatusBadRequest, "Category not specified")
 		return
 	}
 
@@ -42,15 +42,15 @@ func (h *NodeTypeHandler) GetNodeTypesByCategory(w http.ResponseWriter, r *http.
 
 	if err := h.DB.Where("category = ? AND is_active = ?", category, true).
 		Order("name").Find(&nodeTypes).Error; err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al obtener tipos de nodos")
+		RespondError(w, http.StatusInternalServerError, "Error getting node types")
 		return
 	}
 
 	RespondJSON(w, http.StatusOK, nodeTypes)
 }
 
-// GetNodeSchemas - Obtiene los schemas de validación para todos los nodos
-// Query param opcional: ?mode=basic (solo parámetros básicos) o ?mode=advanced (todos)
+// GetNodeSchemas - Gets validation schemas for all nodes
+// Optional query param: ?mode=basic (basic parameters only) or ?mode=advanced (all)
 func (h *NodeTypeHandler) GetNodeSchemas(w http.ResponseWriter, r *http.Request) {
 	mode := r.URL.Query().Get("mode")
 
@@ -64,8 +64,8 @@ func (h *NodeTypeHandler) GetNodeSchemas(w http.ResponseWriter, r *http.Request)
 	RespondJSON(w, http.StatusOK, schemas)
 }
 
-// GetNodeSchema - Obtiene el schema de validación para un tipo de nodo específico
-// Query param opcional: ?mode=basic (solo parámetros básicos) o ?mode=advanced (todos)
+// GetNodeSchema - Gets the validation schema for a specific node type
+// Optional query param: ?mode=basic (basic parameters only) or ?mode=advanced (all)
 func (h *NodeTypeHandler) GetNodeSchema(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeType := vars["type"]

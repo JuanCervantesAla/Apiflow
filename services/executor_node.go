@@ -49,7 +49,7 @@ func (es *ExecutorService) executeNode(
 		result.Results[nodeID] = exec
 		result.ExecutedNodes = append(result.ExecutedNodes, nodeID)
 
-		// Enviar mensaje de error del nodo
+		// Send node error message
 		if es.Hub != nil && result.UserID != "" {
 			es.Hub.BroadcastToUser(result.UserID, websocket.ExecutionUpdate{
 				Type:        "node",
@@ -73,7 +73,7 @@ func (es *ExecutorService) executeNode(
 	result.Results[nodeID] = exec
 	result.ExecutedNodes = append(result.ExecutedNodes, nodeID)
 
-	// Enviar mensaje de nodo completado exitosamente
+	// Send node completed successfully message
 	if es.Hub != nil && result.UserID != "" {
 		// Create a safe copy of output data without circular references
 		safeData := make(map[string]interface{})
@@ -126,7 +126,7 @@ func (es *ExecutorService) executeNode(
 		}
 
 		for _, e := range edges {
-			// Usar sourceHandle si está disponible, si no, usar label
+			// Use sourceHandle if available, otherwise use label
 			edgeIdentifier := e.SourceHandle
 			if edgeIdentifier == "" {
 				edgeIdentifier = e.Label

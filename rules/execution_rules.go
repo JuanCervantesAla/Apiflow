@@ -12,19 +12,22 @@ const (
 )
 
 var AllowedCategoryTransitions = map[string][]string{
-	string(models.CategoryTrigger):     {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
-	string(models.CategoryData):        {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
-	string(models.CategoryLogic):       {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
-	string(models.CategoryIO):          {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
-	string(models.CategoryControl):     {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
-	string(models.CategoryIntegration): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration)},
-	"":                                 {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), ""}, // Para custom/sin categoría
+	string(models.CategoryTrigger):     {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI)},
+	string(models.CategoryData):        {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI)},
+	string(models.CategoryLogic):       {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI)},
+	string(models.CategoryIO):          {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI)},
+	string(models.CategoryControl):     {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI)},
+	string(models.CategoryIntegration): {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI)},
+	string(models.CategoryAI):          {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI)},
+	"":                                 {string(models.CategoryData), string(models.CategoryLogic), string(models.CategoryIO), string(models.CategoryControl), string(models.CategoryIntegration), string(models.CategoryAI), ""}, // For custom/no category
 }
 
 var AllowedNodeTypes = map[string]bool{
 	// Triggers
-	"manual-trigger":  true,
-	"webhook-trigger": true,
+	"manual-trigger":   true,
+	"webhook-trigger":  true,
+	"cron-trigger":     true,
+	"telegram-trigger": true,
 	// Data Processing
 	"set-data":       true,
 	"transform-data": true,
@@ -46,10 +49,9 @@ var AllowedNodeTypes = map[string]bool{
 	// IO
 	"http-request": true,
 	"log":          true,
+	"database":     true,
 	// AI
-	"groq":   true,
-	"gpt":    true,
-	"claude": true,
+	"groq": true,
 	// Integration
 	"email":    true,
 	"telegram": true,
@@ -59,11 +61,11 @@ var AllowedNodeTypes = map[string]bool{
 
 func ValidateFlow(flow *models.Flow) error {
 	if len(flow.Nodes) == 0 {
-		return errors.New("el flujo no contiene nodos")
+		return errors.New("flow contains no nodes")
 	}
 
 	if len(flow.Nodes) > MaxNodes {
-		return errors.New("excede el máximo de nodos permitidos")
+		return errors.New("exceeds maximum allowed nodes")
 	}
 
 	triggerCount := 0
@@ -73,7 +75,7 @@ func ValidateFlow(flow *models.Flow) error {
 		node := &flow.Nodes[i]
 
 		if !AllowedNodeTypes[node.Type] {
-			return errors.New("tipo de nodo no permitido: " + node.Type)
+			return errors.New("node type not allowed: " + node.Type)
 		}
 
 		if node.Category == string(models.CategoryTrigger) {
@@ -84,7 +86,7 @@ func ValidateFlow(flow *models.Flow) error {
 	}
 
 	if triggerCount != 1 {
-		return errors.New("el flujo debe tener exactamente un trigger")
+		return errors.New("flow must have exactly one trigger")
 	}
 
 	for _, edge := range flow.Edges {
@@ -92,15 +94,15 @@ func ValidateFlow(flow *models.Flow) error {
 		target, ok2 := nodeMap[edge.Target]
 
 		if !ok1 || !ok2 {
-			return errors.New("edge apunta a nodos inexistentes")
+			return errors.New("edge points to non-existent nodes")
 		}
 
-		// Los triggers NO pueden recibir conexiones de entrada
+		// Triggers CANNOT receive input connections
 		if target.Category == string(models.CategoryTrigger) {
-			println("ERROR: No puedes conectar hacia un nodo trigger")
-			println("  Intentaste conectar:", source.Label, "→", target.Label)
-			println("  Los triggers deben estar al INICIO del flujo, no pueden recibir datos")
-			return errors.New("los triggers no pueden recibir conexiones de entrada. Conecta desde el trigger hacia otros nodos")
+			println("ERROR: You cannot connect to a trigger node")
+			println("  Tried to connect:", source.Label, "→", target.Label)
+			println("  Triggers must be at the START of the flow, they cannot receive data")
+			return errors.New("triggers cannot receive input connections. Connect from the trigger to other nodes")
 		}
 
 		allowed := AllowedCategoryTransitions[source.Category]
@@ -113,12 +115,12 @@ func ValidateFlow(flow *models.Flow) error {
 		}
 
 		if !valid {
-			// Debug: imprimir qué conexión falló
-			println("DEBUG: Conexión rechazada")
+			// Debug: print which connection failed
+			println("DEBUG: Connection rejected")
 			println("  Source Node:", source.Label, "Type:", source.Type, "Category:", source.Category)
 			println("  Target Node:", target.Label, "Type:", target.Type, "Category:", target.Category)
 			println("  Allowed categories from source:", allowed)
-			return errors.New("conexión no permitida entre nodos")
+			return errors.New("connection not allowed between nodes")
 		}
 	}
 

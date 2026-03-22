@@ -35,7 +35,7 @@ func (h *ExecutionHandler) ExecuteFlow(w http.ResponseWriter, r *http.Request) {
 	var flow models.Flow
 	if err := h.DB.Preload("Nodes").Preload("Edges").
 		First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
-		RespondError(w, http.StatusNotFound, "Flujo no encontrado")
+		RespondError(w, http.StatusNotFound, "Flow not found")
 		return
 	}
 
@@ -51,7 +51,7 @@ func (h *ExecutionHandler) ExecuteFlow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.DB.Create(&execution).Error; err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al crear registro de ejecución")
+		RespondError(w, http.StatusInternalServerError, "Error creating execution record")
 		return
 	}
 
@@ -87,7 +87,7 @@ func (h *ExecutionHandler) GetFlowExecutions(w http.ResponseWriter, r *http.Requ
 
 	var flow models.Flow
 	if err := h.DB.First(&flow, "id = ? AND user_id = ?", flowID, userId).Error; err != nil {
-		RespondError(w, http.StatusNotFound, "Flow no encontrado")
+		RespondError(w, http.StatusNotFound, "Flow not found")
 		return
 	}
 
@@ -96,7 +96,7 @@ func (h *ExecutionHandler) GetFlowExecutions(w http.ResponseWriter, r *http.Requ
 		Order("started_at DESC").
 		Limit(50).
 		Find(&executions).Error; err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al obtener ejecuciones")
+		RespondError(w, http.StatusInternalServerError, "Error getting executions")
 		return
 	}
 
@@ -111,14 +111,14 @@ func (h *ExecutionHandler) GetExecution(w http.ResponseWriter, r *http.Request) 
 
 	var execution models.Execution
 	if err := h.DB.First(&execution, "id = ? AND user_id = ?", executionID, userId).Error; err != nil {
-		RespondError(w, http.StatusNotFound, "Ejecución no encontrada")
+		RespondError(w, http.StatusNotFound, "Execution not found")
 		return
 	}
 
 	RespondJSON(w, http.StatusOK, execution)
 }
 
-// GetAllExecutions - GET /api/executions (todas las del usuario)
+// GetAllExecutions - GET /api/executions (all user executions)
 func (h *ExecutionHandler) GetAllExecutions(w http.ResponseWriter, r *http.Request) {
 	userId, _ := r.Context().Value("userId").(string)
 
@@ -134,7 +134,7 @@ func (h *ExecutionHandler) GetAllExecutions(w http.ResponseWriter, r *http.Reque
 		Order("executions.started_at DESC").
 		Limit(100).
 		Scan(&executions).Error; err != nil {
-		RespondError(w, http.StatusInternalServerError, "Error al obtener ejecuciones")
+		RespondError(w, http.StatusInternalServerError, "Error getting executions")
 		return
 	}
 

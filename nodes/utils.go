@@ -24,12 +24,35 @@ func toFloat(v interface{}) (float64, bool) {
 
 func interpolateString(str string, prev map[string]map[string]interface{}) string {
 	result := str
+
+	// First, support explicit node references like {{node-1.output.field}}
+	for nodeID, output := range prev {
+		// Replace {{nodeID.output.field}}
+		for key, val := range output {
+			placeholder := fmt.Sprintf("{{%s.output.%s}}", nodeID, key)
+			if strings.Contains(result, placeholder) {
+				result = strings.ReplaceAll(result, placeholder, fmt.Sprint(val))
+			}
+		}
+
+		// Replace {{nodeID.output}} with the full output map
+		basePlaceholder := fmt.Sprintf("{{%s.output}}", nodeID)
+		if strings.Contains(result, basePlaceholder) {
+			result = strings.ReplaceAll(result, basePlaceholder, fmt.Sprint(output))
+		}
+	}
+
+	// Backwards compatibility: simple placeholders like {{field}} that match any
+	// key in any previous node output
 	for _, output := range prev {
 		for key, val := range output {
 			placeholder := fmt.Sprintf("{{%s}}", key)
-			result = strings.ReplaceAll(result, placeholder, fmt.Sprint(val))
+			if strings.Contains(result, placeholder) {
+				result = strings.ReplaceAll(result, placeholder, fmt.Sprint(val))
+			}
 		}
 	}
+
 	return result
 }
 

@@ -26,7 +26,7 @@ func NewWebhookHandler(db *gorm.DB, hub *websocket.Hub) *WebhookHandler {
 	}
 }
 
-// HandleWebhook maneja las peticiones webhook entrantes (POST y GET)
+// HandleWebhook handles incoming webhook requests (POST and GET)
 // POST /api/webhooks/:id
 func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -37,14 +37,14 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validar que el flow existe
+	// Validate that the flow exists
 	var flow models.Flow
 	if err := h.DB.Preload("Nodes").Preload("Edges").First(&flow, "id = ?", flowID).Error; err != nil {
 		RespondJSON(w, http.StatusNotFound, map[string]string{"error": "Flow not found"})
 		return
 	}
 
-	// Leer el body del webhook
+	// Read the webhook body
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "Failed to read request body"})
@@ -67,10 +67,10 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	payload["query"] = r.URL.Query()
 	payload["timestamp"] = time.Now().Unix()
 
-	// Verificar que el flow tenga un webhook trigger
+	// Verify that the flow has a trigger that can be started via webhook
 	hasWebhookTrigger := false
 	for _, node := range flow.Nodes {
-		if node.Type == "webhook-trigger" {
+		if node.Type == "webhook-trigger" || node.Type == "telegram-trigger" {
 			hasWebhookTrigger = true
 			break
 		}
@@ -81,22 +81,22 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Crear contexto inicial con los datos del webhook
+	// Create initial context with webhook data
 	initialContext := map[string]map[string]interface{}{
 		"webhook": payload,
 	}
 
-	// Ejecutar el flow de manera asíncrona
+	// Execute the flow asynchronously
 	executionID := uuid.New().String()
 	userID := flow.UserID
 
-	// Ejecutar en background
+	// Execute in background
 	go func() {
 		executorService := services.NewExecutorService(h.Hub)
 		executorService.ExecuteFlowWithContext(&flow, initialContext, userID, executionID)
 	}()
 
-	// Retornar respuesta inmediata
+	// Return immediate response
 	RespondJSON(w, http.StatusAccepted, map[string]interface{}{
 		"message":     "Webhook received and flow execution started",
 		"executionId": executionID,
@@ -104,11 +104,11 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractHeadersFromRequest extrae headers relevantes del request
+// extractHeadersFromRequest extracts relevant headers from the request
 func extractHeadersFromRequest(r *http.Request) map[string]string {
 	headers := make(map[string]string)
 
-	// Headers comunes de webhooks
+	// Common webhook headers
 	relevantHeaders := []string{
 		"Content-Type",
 		"User-Agent",
@@ -128,7 +128,7 @@ func extractHeadersFromRequest(r *http.Request) map[string]string {
 	return headers
 }
 
-// GetWebhookURL retorna la URL del webhook para un flow
+// GetWebhookURL returns the webhook URL for a flow
 // GET /api/webhooks/:id/url
 func (h *WebhookHandler) GetWebhookURL(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -139,14 +139,14 @@ func (h *WebhookHandler) GetWebhookURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validar que el flow existe
+	// Validate that the flow exists
 	var flow models.Flow
 	if err := h.DB.First(&flow, "id = ?", flowID).Error; err != nil {
 		RespondJSON(w, http.StatusNotFound, map[string]string{"error": "Flow not found"})
 		return
 	}
 
-	// Construir la URL del webhook
+	// Build the webhook URL
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

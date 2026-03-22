@@ -12,7 +12,7 @@ import (
 type CSVParserNode struct{}
 
 type CSVParserParams struct {
-	InputData string `json:"inputData"` // CSV string or array to convert
+	InputData string `json:"inputData"` // CSV string or JSON array to convert
 	Mode      string `json:"mode"`      // "parse" or "stringify"
 	Delimiter string `json:"delimiter"` // "," ";" "\t" etc
 	HasHeader bool   `json:"hasHeader"` // First row is header
@@ -20,10 +20,12 @@ type CSVParserParams struct {
 
 func (n *CSVParserNode) Execute(node *models.Node, prev map[string]map[string]interface{}) (map[string]interface{}, error) {
 	var params CSVParserParams
-	paramsJSON, _ := json.Marshal(node.Parameters)
-	if err := json.Unmarshal(paramsJSON, &params); err != nil {
+	if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
 		return nil, fmt.Errorf("error parsing parameters: %v", err)
 	}
+
+	// Allow referencing previous node outputs, e.g. {{node-1.output.csvContent}}
+	params.InputData = interpolateString(params.InputData, prev)
 
 	// Default values
 	if params.Mode == "" {

@@ -16,11 +16,12 @@ import (
 )
 
 type AIGenerateFlowRequest struct {
-	Description string `json:"description" binding:"required"`
-	Context     string `json:"context"`
-	APIKey      string `json:"apiKey,omitempty"`
-	FlowID      string `json:"flowId,omitempty"`
-	SessionID   string `json:"sessionId,omitempty"`
+	Description  string `json:"description" binding:"required"`
+	Context      string `json:"context"`
+	SystemPrompt string `json:"systemPrompt,omitempty"`
+	APIKey       string `json:"apiKey,omitempty"`
+	FlowID       string `json:"flowId,omitempty"`
+	SessionID    string `json:"sessionId,omitempty"`
 }
 
 type AIRepairFlowRequest struct {
@@ -105,21 +106,18 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(AIGenerateFlowResponse{
 			Success: false,
-			Error:   "API key de Groq no configurada. Por favor, configura GROQ_API_KEY en el archivo .env",
+			Error:   "Groq API key not configured. Please set GROQ_API_KEY in your .env file",
 		})
 		return
 	}
 
 	systemPrompt := buildSystemPrompt()
-	userPrompt := req.Description
-	if req.Context != "" {
-		userPrompt = req.Context + "\n\n" + req.Description
-	}
+	userPrompt := buildUserPrompt(req)
 
 	// Groq request using OpenAI-compatible format
 	groqReq := GroqRequest{
 		Model:       "llama-3.3-70b-versatile", // Fast and powerful Groq model
-		Temperature: 0.7,
+		Temperature: 0.25,
 		MaxTokens:   8192,
 		Messages: []GroqMessage{
 			{
@@ -128,7 +126,7 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Role:    "user",
-				Content: userPrompt + "\n\nResponde SOLO con JSON válido, sin texto adicional.",
+				Content: userPrompt + "\n\nRespond ONLY with valid JSON, no additional text.",
 			},
 		},
 	}
@@ -209,10 +207,10 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 
 	content := groqResp.Choices[0].Message.Content
 
-	// Limpiar la respuesta (remover markdown code blocks si existen)
+	// Clean the response (remove markdown code blocks if present)
 	cleanedContent := content
 
-	// Buscar JSON dentro de code blocks ```json ... ```
+	// Search for JSON inside code blocks ```json ... ```
 	if strings.Contains(content, "```json") {
 		start := strings.Index(content, "```json") + 7
 		end := strings.LastIndex(content, "```")
@@ -220,7 +218,7 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 			cleanedContent = strings.TrimSpace(content[start:end])
 		}
 	} else if strings.Contains(content, "```") {
-		// Intentar con code block genérico
+		// Try with generic code block
 		start := strings.Index(content, "```") + 3
 		end := strings.LastIndex(content, "```")
 		if start > 3 && end > start {
@@ -228,7 +226,7 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Buscar el primer { y el último } para extraer el JSON
+	// Find the first { and last } to extract the JSON
 	if !strings.HasPrefix(strings.TrimSpace(cleanedContent), "{") {
 		firstBrace := strings.Index(cleanedContent, "{")
 		lastBrace := strings.LastIndex(cleanedContent, "}")
@@ -258,7 +256,10 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Aplicar validaciones y defaults a los nodos generados
+	// Apply validations and defaults to the generated nodes
+	flow.Nodes = normalizeAINodes(flow.Nodes)
+	flow.Edges = normalizeAIEdges(flow.Edges)
+
 	processedNodes, err := processAINodes(flow.Nodes)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -282,313 +283,85 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 }
 
 func buildSystemPrompt() string {
+	return `You are an expert workflow designer for CapyFlow.
 
-	return `Eres un asistente experto en crear flujos de trabajo (workflows) para CapyFlow.
+Your output must be production-ready and executable on the first run.
 
-Analiza la descripción del usuario y genera un flujo de trabajo válido en formato JSON con nodos COMPLETAMENTE CONFIGURADOS.
+GLOBAL RULES:
+1. Return ONLY valid JSON.
+2. First node must be one of: manual-trigger, webhook-trigger, telegram-trigger.
+3. Use real node types in BOTH node.type and node.data.type. Never use "custom" as business type.
+4. Use edge type "customEdge" for all edges.
+5. Configure every required parameter with realistic values.
+6. Add data.description for EACH node explaining purpose and expected input/output in one short sentence.
+7. Keep spatial readability: start at x=100, y=100 and increment x around 260 per step.
 
-REGLAS:
-1. Todo flujo debe empezar con manual-trigger o webhook-trigger
-2. Posiciona los nodos espaciados (mínimo 250px horizontalmente)
-3. Usa "customEdge" como tipo de edge
-4. IMPORTANTE: Configura TODOS los parámetros requeridos de cada nodo con valores realistas
-5. CRITICAL: En cada nodo, usa el tipo REAL (http-request, gpt, log, etc.) tanto en "type" como en "data.type" - NUNCA uses "custom"
+PARAMETER CONTRACTS (must match runtime):
+- set-data: values (object)
+- http-request: url (string), method (GET|POST|PUT|DELETE|PATCH), optional headers/body
+- log: optional label, optional message
+- groq: prompt (string), optional model, temperature, maxTokens
+- if-condition: field (string), operator (==|!=|>|<|>=|<=|contains), value (string/number/bool)
+- loop: arraySource (string), optional operation (forEach|map|filter), mapExpression, filterExpr
+- transform-data: transformations (array of {source,target,operation,value})
+- json-parser: json (string)
+- delay: duration (milliseconds, max 300000)
+- email: to, subject, body, from, smtpHost, smtpPort, smtpUser, smtpPassword
+- telegram: message, optional chatId
+- database: driver (postgres|mysql|sqlite3), connectionUrl, query
+- filter: inputData (array), field, operator, value, optional mode (keep|remove)
+- switch: inputValue, cases ([{value, output}]), optional defaultCase, mode (equals|contains)
 
-TIPOS DE NODOS DISPONIBLES:
+INTERPOLATION:
+- Use {{node-ID.output.field}} when referencing previous node output.
+- Prefer explicit node references over ambiguous placeholders.
 
---- TRIGGERS ---
-• manual-trigger: Inicia el flujo manualmente
-  Parámetros: ninguno
-
-• webhook-trigger: Inicia el flujo vía webhook HTTP
-  Parámetros: 
-    - method: "POST" | "GET" (default: "POST")
-    - path: "/webhook/path" (opcional)
-
---- LOGIC ---
-• if-condition: Bifurcación condicional
-  Parámetros REQUERIDOS:
-    - left: "{{node-X.output.field}}" (valor izquierdo)
-    - operator: "==" | "!=" | ">" | "<" | ">=" | "<=" | "contains"
-    - right: "valor" (valor derecho)
-
-• loop: Itera sobre un array
-  Parámetros REQUERIDOS:
-    - items: "{{node-X.output.data}}" (array)
-    - max_iterations: 100 (opcional)
-
---- DATA ---
-• set-data: Define datos estáticos
-  Parámetros REQUERIDOS:
-    - data: { "key": "value", "number": 42 }
-
-• transform-data: Transforma datos
-  Parámetros REQUERIDOS:
-    - operation: "map" | "filter"
-    - field: "fieldName"
-
-• json-parser: Parsea JSON
-  Parámetros REQUERIDOS:
-    - input: "{{node-X.output}}"
-
---- I/O ---
-• http-request: Hace petición HTTP
-  Parámetros REQUERIDOS:
-    - url: "https://api.example.com/endpoint"
-    - method: "GET" | "POST" | "PUT" | "DELETE"
-  Parámetros opcionales:
-    - headers: {"Content-Type": "application/json"}
-    - body: "{\"key\": \"value\"}"
-
-• log: Registra información en consola
-  Parámetros:
-    - label: "Log name"
-    - message: "Mensaje: {{node-X.output}}"
-
-• delay: Pausa la ejecución
-  Parámetros REQUERIDOS:
-    - duration: 5 (segundos, máx 300)
-
---- AI ---
-• gpt: Usa GPT de OpenAI
-  Parámetros REQUERIDOS:
-    - prompt: "Resume este texto: {{node-X.output}}"
-  Parámetros opcionales:
-    - model: "gpt-4" (default)
-    - temperature: 0.7
-    - max_tokens: 1000
-
-• claude: Usa Claude de Anthropic
-  Parámetros REQUERIDOS:
-    - prompt: "Analiza: {{node-X.output}}"
-
-• groq: Usa Groq AI (LLaMA, Mixtral, Gemma)
-  Parámetros REQUERIDOS:
-    - prompt: "Genera ideas sobre: {{node-X.output}}"
-
---- COMMUNICATION ---
-• email: Envía email
-  Parámetros REQUERIDOS:
-    - to: "user@example.com"
-    - subject: "Asunto del email"
-    - body: "Contenido del mensaje"
-
-• telegram: Envía mensaje a Telegram
-  Parámetros REQUERIDOS:
-    - message: "Texto del mensaje"
-
---- DATABASE ---
-• database: Ejecuta query SQL
-  Parámetros REQUERIDOS:
-    - driver: "postgres" | "mysql" | "sqlite3"
-    - connectionUrl: "postgres://user:pass@host:5432/db"
-    - query: "SELECT * FROM users WHERE id = {{userId}}"
-
---- FILTER ---
-• filter: Filtra arrays
-  Parámetros REQUERIDOS:
-    - field: "status"
-    - operator: "==" | "!=" | ">" | "<" | "contains"
-    - value: "active"
-
---- ADVANCED DATA ---
-• split: Divide un array en chunks
-  Parámetros REQUERIDOS:
-    - array: "{{node-X.output.items}}" (array a dividir)
-    - chunkSize: 10 (tamaño de cada chunk, número > 0)
-
-• merge: Combina múltiples arrays
-  Parámetros REQUERIDOS:
-    - arrays: ["{{node-X.output}}", "{{node-Y.output}}"] (arrays a combinar)
-
-• function: Ejecuta código JavaScript personalizado
-  Parámetros REQUERIDOS:
-    - code: "return input * 2;" (código JavaScript, usar 'input' como variable)
-
-• sort: Ordena un array por campo
-  Parámetros REQUERIDOS:
-    - array: "{{node-X.output.items}}" (array a ordenar)
-    - field: "name" (campo para ordenar)
-  Parámetros opcionales:
-    - order: "asc" | "desc" (default: "asc")
-
-• csv-parser: Parsea string CSV a array
-  Parámetros REQUERIDOS:
-    - input: "{{node-X.output}}" (string CSV)
-  Parámetros opcionales:
-    - delimiter: "," (default: ",")
-    - hasHeader: true (default: true)
-
-• regex-extract: Extrae texto usando regex
-  Parámetros REQUERIDOS:
-    - input: "{{node-X.output.text}}" (string de entrada)
-    - pattern: "[0-9]+" (expresión regular)
-  Parámetros opcionales:
-    - group: 0 (grupo de captura, 0 = match completo)
-
---- CONTROL FLOW ---
-• switch: Múltiples condiciones (como switch/case)
-  Parámetros REQUERIDOS:
-    - value: "{{node-X.output.status}}" (valor a evaluar)
-    - cases: [{"value": "active", "output": "A"}, {"value": "inactive", "output": "B"}]
-  Parámetros opcionales:
-    - default: "default output" (si no hay match)
-
-• error-handler: Maneja errores con retry
-  Parámetros opcionales:
-    - retry: true (reintentar en error, default: false)
-    - maxRetries: 3 (máximo reintentos, 1-10)
-    - fallbackValue: "default" (valor por defecto si falla)
-
-• stop: Detiene la ejecución del flujo
-  Parámetros opcionales:
-    - message: "Flujo terminado" (mensaje de parada)
-
-INTERPOLACIÓN DE VARIABLES:
-- Usa {{node-ID.output}} para referenciar el output completo de un nodo
-- Usa {{node-ID.output.field}} para campos específicos
-- Ejemplo: "{{node-2.output.temperature}}"
-
-EJEMPLOS COMPLETOS:
-
-Ejemplo 1 - Consulta API del clima:
+JSON SHAPE:
 {
-  "flowName": "Weather API Query",
-  "flowDescription": "Consulta el clima de una ciudad usando API",
-  "nodes": [
-    {
-      "id": "node-1",
-      "type": "manual-trigger",
-      "position": {"x": 100, "y": 100},
-      "data": {
-        "label": "Start Weather Query",
-        "type": "manual-trigger",
-        "parameters": {}
-      }
-    },
-    {
-      "id": "node-2",
-      "type": "http-request",
-      "position": {"x": 360, "y": 100},
-      "data": {
-        "label": "Get Weather Data",
-        "type": "http-request",
-        "parameters": {
-          "url": "https://api.openweathermap.org/data/2.5/weather?q=London&appid=YOUR_KEY",
-          "method": "GET",
-          "headers": {"Accept": "application/json"}
-        }
-      }
-    },
-    {
-      "id": "node-3",
-      "type": "log",
-      "position": {"x": 620, "y": 100},
-      "data": {
-        "label": "Display Temperature",
-        "type": "log",
-        "parameters": {
-          "label": "Weather Result",
-          "message": "Temperature: {{node-2.output.main.temp}}°C"
-        }
-      }
-    }
-  ],
-  "edges": [
-    {"id": "e1", "source": "node-1", "target": "node-2", "type": "customEdge"},
-    {"id": "e2", "source": "node-2", "target": "node-3", "type": "customEdge"}
-  ]
+	"flowName": "...",
+	"flowDescription": "...",
+	"nodes": [
+		{
+			"id": "node-1",
+			"type": "manual-trigger",
+			"position": {"x": 100, "y": 100},
+			"data": {
+				"label": "Start",
+				"type": "manual-trigger",
+				"description": "Starts the flow manually and emits an empty payload.",
+				"parameters": {}
+			}
+		}
+	],
+	"edges": [
+		{"id": "edge-1", "source": "node-1", "target": "node-2", "type": "customEdge"}
+	]
+}`
 }
 
-Ejemplo 2 - Procesamiento con IA:
-{
-  "flowName": "AI Text Analysis",
-  "flowDescription": "Analiza sentimiento de texto con GPT",
-  "nodes": [
-    {
-      "id": "node-1",
-      "type": "manual-trigger",
-      "position": {"x": 100, "y": 100},
-      "data": {
-        "label": "Start Analysis",
-        "type": "manual-trigger",
-        "parameters": {}
-      }
-    },
-    {
-      "id": "node-2",
-      "type": "set-data",
-      "position": {"x": 360, "y": 100},
-      "data": {
-        "label": "Customer Feedback",
-        "type": "set-data",
-        "parameters": {
-          "data": {
-            "text": "The product is amazing! Best purchase ever.",
-            "source": "Review #1234"
-          }
-        }
-      }
-    },
-    {
-      "id": "node-3",
-      "type": "gpt",
-      "position": {"x": 620, "y": 100},
-      "data": {
-        "label": "Analyze Sentiment",
-        "type": "gpt",
-        "parameters": {
-          "prompt": "Analyze the sentiment (positive/negative/neutral) and extract key points from: {{node-2.output.text}}",
-          "model": "gpt-4",
-          "temperature": 0.3,
-          "max_tokens": 500
-        }
-      }
-    },
-    {
-      "id": "node-4",
-      "type": "log",
-      "position": {"x": 880, "y": 100},
-      "data": {
-        "label": "Show Results",
-        "type": "log",
-        "parameters": {
-          "label": "Sentiment Analysis",
-          "message": "Result: {{node-3.output}}"
-        }
-      }
-    }
-  ],
-  "edges": [
-    {"id": "e1", "source": "node-1", "target": "node-2", "type": "customEdge"},
-    {"id": "e2", "source": "node-2", "target": "node-3", "type": "customEdge"},
-    {"id": "e3", "source": "node-3", "target": "node-4", "type": "customEdge"}
-  ]
-}
+func buildUserPrompt(req AIGenerateFlowRequest) string {
+	parts := []string{
+		"Create a CapyFlow workflow from this request:",
+		req.Description,
+	}
 
-FORMATO DE RESPUESTA (JSON ÚNICAMENTE):
-IMPORTANTE: Usa el tipo REAL del nodo (manual-trigger, http-request, gpt, log, etc.)
-NO uses "custom" - el sistema agregará automáticamente iconos y colores.
+	if strings.TrimSpace(req.Context) != "" {
+		parts = append(parts, "Additional context:", req.Context)
+	}
 
-{
-  "flowName": "Nombre descriptivo",
-  "flowDescription": "Breve descripción",
-  "nodes": [
-    {
-      "id": "node-X",
-      "type": "TIPO-REAL-DEL-NODO",  // Ej: "http-request", "gpt", "log"
-      "position": {"x": 100, "y": 100},
-      "data": {
-        "label": "Nombre descriptivo",
-        "type": "TIPO-REAL-DEL-NODO",  // MISMO tipo que arriba
-        "parameters": { ...parámetros completos... }
-      }
-    }
-  ],
-  "edges": [...]
-}
+	if strings.TrimSpace(req.SystemPrompt) != "" {
+		parts = append(parts, "Client-side constraints (lower priority than runtime contracts):", req.SystemPrompt)
+	}
 
-Responde SOLO con JSON válido, sin explicaciones ni texto adicional. CONFIGURA TODOS LOS PARÁMETROS REQUERIDOS.`
+	parts = append(parts,
+		"Quality checklist:",
+		"- Return executable parameters, not placeholders unless credentials are required.",
+		"- Make node descriptions specific and contextual.",
+		"- Ensure references between nodes are coherent and existing.",
+		"- Respond ONLY with JSON.",
+	)
+
+	return strings.Join(parts, "\n\n")
 }
 
 func (h *AIHandler) RepairFlowWithAI(w http.ResponseWriter, r *http.Request) {
@@ -606,48 +379,48 @@ func (h *AIHandler) RepairFlowWithAI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(AIGenerateFlowResponse{
 			Success: false,
-			Error:   "API key de Groq no configurada. Por favor, configura GROQ_API_KEY en el archivo .env",
+			Error:   "Groq API key not configured. Please set GROQ_API_KEY in your .env file",
 		})
 		return
 	}
 
 	flowJSON, _ := json.MarshalIndent(req.Flow, "", "  ")
 
-	repairPrompt := fmt.Sprintf(`Eres un experto en reparar flujos de trabajo de CapyFlow.
+	repairPrompt := fmt.Sprintf(`You are an expert in repairing CapyFlow workflows.
 
-FLUJO ACTUAL (con posibles errores):
+CURRENT FLOW (with possible errors):
 %s
 
-PROBLEMAS REPORTADOS:
+REPORTED ISSUES:
 %s
 
-ANALIZA Y REPARA:
-1. Verifica que todos los nodos tengan IDs únicos
-2. Confirma que todos los edges conecten nodos existentes
-3. Asegura que haya al menos un nodo trigger (manual-trigger o webhook-trigger)
-4. Valida que los tipos de nodos sean correctos
-5. Corrige posiciones superpuestas (mínimo 250px de separación horizontal)
-6. IMPORTANTE: Arregla parámetros inválidos o faltantes - CONFIGURA TODOS los parámetros requeridos
-7. Elimina nodos o edges huérfanos
+ANALYZE AND REPAIR:
+1. Verify that all nodes have unique IDs
+2. Confirm that all edges connect existing nodes
+3. Ensure there is at least one trigger node (manual-trigger, webhook-trigger, or telegram-trigger)
+4. Validate that node types are correct
+5. Fix overlapping positions (minimum 250px horizontal separation)
+6. IMPORTANT: Fix invalid or missing parameters - CONFIGURE ALL required parameters
+7. Remove orphan nodes or edges
 
-PARÁMETROS REQUERIDOS POR TIPO DE NODO:
-• http-request: DEBE tener url (string) y method ("GET"|"POST"|"PUT"|"DELETE")
-• if-condition: DEBE tener left, operator, right
-• set-data: DEBE tener data (object)
-• gpt/claude/groq: DEBE tener prompt (string con el texto o {{variable}})
-• log: puede tener label y message
-• delay: DEBE tener duration (número en segundos, max 300)
-• email: DEBE tener to, subject, body
-• telegram: DEBE tener message
-• database: DEBE tener driver, connectionUrl, query
-• loop: DEBE tener items (array o referencia {{node-X.output}})
-• filter: DEBE tener field, operator, value
+REQUIRED PARAMETERS BY NODE TYPE:
+• http-request: MUST have url (string) and method ("GET"|"POST"|"PUT"|"DELETE")
+• if-condition: MUST have left, operator, right
+• set-data: MUST have values (object)
+• groq: MUST have prompt (string with text or {{variable}})
+• log: can have label and message
+• delay: MUST have duration (number in seconds, max 300)
+• email: MUST have to, subject, body
+• telegram: MUST have message (chatId is optional if a default chat is configured)
+• database: MUST have driver, connectionUrl, query
+• loop: MUST have arraySource (string path to array, e.g. data or items)
+• filter: MUST have field, operator, value
 
-Si un nodo NO tiene parámetros configurados, AGREGALOS con valores realistas basados en su contexto.
-Si un parámetro está vacío "", PONLE un valor placeholder realista.
+If a node does NOT have configured parameters, ADD them with realistic values based on its context.
+If a parameter is empty "", SET a realistic placeholder value.
 
-Ejemplo de reparación de parámetros:
-ANTES (incorrecto):
+Parameter repair example:
+BEFORE (incorrect):
 {
   "id": "node-2",
   "type": "http-request",
@@ -658,7 +431,7 @@ ANTES (incorrecto):
   }
 }
 
-DESPUÉS (corregido):
+AFTER (corrected):
 {
   "id": "node-2",
   "type": "http-request",
@@ -673,16 +446,16 @@ DESPUÉS (corregido):
   }
 }
 
-RESPONDE CON EL FLUJO REPARADO en este formato JSON:
+RESPOND WITH THE REPAIRED FLOW in this JSON format:
 {
-  "flowName": "nombre del flujo",
-  "flowDescription": "descripción",
-  "nodes": [...nodos reparados CON PARÁMETROS COMPLETOS...],
-  "edges": [...edges reparadas...],
-  "fixes": ["fix 1", "fix 2", ...] // Lista de reparaciones realizadas
+  "flowName": "flow name",
+  "flowDescription": "description",
+  "nodes": [...repaired nodes WITH COMPLETE PARAMETERS...],
+  "edges": [...repaired edges...],
+  "fixes": ["fix 1", "fix 2", ...] // List of repairs made
 }
 
-Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
+Respond ONLY with valid JSON.`, string(flowJSON), req.Issues)
 
 	// Groq request using OpenAI-compatible format
 	groqReq := GroqRequest{
@@ -692,7 +465,7 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 		Messages: []GroqMessage{
 			{
 				Role:    "system",
-				Content: "Eres un experto en reparar flujos de trabajo de CapyFlow. Devuelve SOLO JSON válido.",
+				Content: "You are an expert in repairing CapyFlow workflows. Return ONLY valid JSON.",
 			},
 			{
 				Role:    "user",
@@ -777,10 +550,10 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 
 	content := groqResp.Choices[0].Message.Content
 
-	// Limpiar la respuesta (remover markdown code blocks si existen)
+	// Clean the response (remove markdown code blocks if present)
 	cleanedContent := content
 
-	// Buscar JSON dentro de code blocks ```json ... ```
+	// Search for JSON inside code blocks ```json ... ```
 	if strings.Contains(content, "```json") {
 		start := strings.Index(content, "```json") + 7
 		end := strings.LastIndex(content, "```")
@@ -788,7 +561,7 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 			cleanedContent = strings.TrimSpace(content[start:end])
 		}
 	} else if strings.Contains(content, "```") {
-		// Intentar con code block genérico
+		// Try with generic code block
 		start := strings.Index(content, "```") + 3
 		end := strings.LastIndex(content, "```")
 		if start > 3 && end > start {
@@ -796,7 +569,7 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 		}
 	}
 
-	// Buscar el primer { y el último } para extraer el JSON
+	// Find the first { and last } to extract the JSON
 	if !strings.HasPrefix(strings.TrimSpace(cleanedContent), "{") {
 		firstBrace := strings.Index(cleanedContent, "{")
 		lastBrace := strings.LastIndex(cleanedContent, "}")
@@ -805,7 +578,7 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 		}
 	}
 
-	// Detectar respuesta truncada (falta el cierre del JSON)
+	// Detect truncated response (missing JSON closing)
 	openBraces := strings.Count(cleanedContent, "{")
 	closeBraces := strings.Count(cleanedContent, "}")
 	isTruncated := openBraces != closeBraces || !strings.HasSuffix(strings.TrimSpace(cleanedContent), "}")
@@ -819,16 +592,16 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 	}
 
 	if err := json.Unmarshal([]byte(cleanedContent), &repairedFlow); err != nil {
-		// Log para debugging
+		// Log for debugging
 		fmt.Printf("❌ Error parsing repaired flow JSON: %v\n", err)
 		fmt.Printf("📄 Original content length: %d\n", len(content))
 		fmt.Printf("📄 Cleaned content length: %d\n", len(cleanedContent))
 		fmt.Printf("🔢 Braces: open=%d, close=%d, truncated=%v\n", openBraces, closeBraces, isTruncated)
 		fmt.Printf("📄 Cleaned content (last 200 chars): ...%s\n", cleanedContent[max(0, len(cleanedContent)-200):])
 
-		hint := "La IA no devolvió un JSON válido. Intenta de nuevo."
+		hint := "AI did not return valid JSON. Try again."
 		if isTruncated {
-			hint = "La respuesta de la IA fue truncada. El flujo es demasiado complejo. Intenta simplificarlo o repáralo manualmente."
+			hint = "AI response was truncated. The flow is too complex. Try simplifying it or repair it manually."
 		}
 
 		w.WriteHeader(http.StatusInternalServerError)
@@ -843,18 +616,18 @@ Responde SOLO con JSON válido.`, string(flowJSON), req.Issues)
 		return
 	}
 
-	// Validar que tenga contenido
+	// Validate that it has content
 	if len(repairedFlow.Nodes) == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   "El flujo reparado no contiene nodos",
+			"error":   "Repaired flow contains no nodes",
 			"fixes":   repairedFlow.Fixes,
 		})
 		return
 	}
 
-	// Aplicar validaciones y defaults a los nodos reparados
+	// Apply validations and defaults to the repaired nodes
 	processedNodes, err := processAINodes(repairedFlow.Nodes)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -898,7 +671,307 @@ func max(a, b int) int {
 	return b
 }
 
-// getNodeMetadata retorna metadata (subtitle, icon, color, category) para un tipo de nodo
+func normalizeAINodes(nodes []any) []any {
+	result := make([]any, 0, len(nodes))
+
+	for i, item := range nodes {
+		nodeMap, ok := item.(map[string]interface{})
+		if !ok {
+			result = append(result, item)
+			continue
+		}
+
+		if id, _ := nodeMap["id"].(string); strings.TrimSpace(id) == "" {
+			nodeMap["id"] = fmt.Sprintf("node-%d", i+1)
+		}
+
+		data, _ := nodeMap["data"].(map[string]interface{})
+		if data == nil {
+			data = map[string]interface{}{}
+			nodeMap["data"] = data
+		}
+
+		nodeType, _ := nodeMap["type"].(string)
+		if dataType, ok := data["type"].(string); ok && strings.TrimSpace(dataType) != "" {
+			nodeType = dataType
+		}
+		nodeType = strings.TrimSpace(nodeType)
+		if nodeType == "" {
+			nodeType = "log"
+		}
+		nodeMap["type"] = nodeType
+		data["type"] = nodeType
+
+		params, _ := data["parameters"].(map[string]interface{})
+		if params == nil {
+			params = map[string]interface{}{}
+		}
+		normalizeNodeParameters(nodeType, params)
+		data["parameters"] = params
+
+		if label, _ := data["label"].(string); strings.TrimSpace(label) == "" {
+			data["label"] = defaultNodeLabel(nodeType)
+		}
+
+		if description, _ := data["description"].(string); strings.TrimSpace(description) == "" {
+			data["description"] = defaultNodeDescription(nodeType, params)
+		}
+
+		result = append(result, nodeMap)
+	}
+
+	return result
+}
+
+func normalizeAIEdges(edges []any) []any {
+	result := make([]any, 0, len(edges))
+	for i, edgeAny := range edges {
+		edge, ok := edgeAny.(map[string]interface{})
+		if !ok {
+			result = append(result, edgeAny)
+			continue
+		}
+
+		if id, _ := edge["id"].(string); strings.TrimSpace(id) == "" {
+			edge["id"] = fmt.Sprintf("edge-%d", i+1)
+		}
+		edge["type"] = "customEdge"
+		result = append(result, edge)
+	}
+	return result
+}
+
+func normalizeNodeParameters(nodeType string, params map[string]interface{}) {
+	switch nodeType {
+	case "set-data":
+		if _, ok := params["values"]; !ok {
+			if legacy, hasLegacy := params["data"]; hasLegacy {
+				params["values"] = legacy
+			}
+		}
+
+	case "if-condition":
+		if _, ok := params["field"]; !ok {
+			if left, hasLeft := params["left"]; hasLeft {
+				if leftStr, ok := left.(string); ok {
+					params["field"] = extractOutputFieldFromRef(leftStr)
+				}
+			}
+		}
+		if _, ok := params["value"]; !ok {
+			if right, hasRight := params["right"]; hasRight {
+				params["value"] = right
+			}
+		}
+		if _, ok := params["field"]; !ok {
+			params["field"] = "status"
+		}
+		if _, ok := params["operator"]; !ok {
+			params["operator"] = "=="
+		}
+		if _, ok := params["value"]; !ok {
+			params["value"] = "success"
+		}
+
+	case "json-parser":
+		if _, ok := params["json"]; !ok {
+			if input, hasInput := params["input"]; hasInput {
+				params["json"] = input
+			}
+		}
+
+	case "loop":
+		if _, ok := params["arraySource"]; !ok {
+			if items, hasItems := params["items"]; hasItems {
+				if itemsStr, ok := items.(string); ok {
+					params["arraySource"] = extractOutputFieldFromRef(itemsStr)
+				}
+			}
+			if _, ok := params["arraySource"]; !ok {
+				if arr, hasArray := params["array"]; hasArray {
+					if arrStr, ok := arr.(string); ok {
+						params["arraySource"] = extractOutputFieldFromRef(arrStr)
+					}
+				}
+			}
+		}
+
+	case "transform-data":
+		if _, ok := params["transformations"]; !ok {
+			op, _ := params["operation"].(string)
+			field, _ := params["field"].(string)
+			if strings.TrimSpace(op) != "" && strings.TrimSpace(field) != "" {
+				params["transformations"] = []map[string]interface{}{
+					{
+						"source":    field,
+						"target":    field,
+						"operation": "extract",
+						"value":     "",
+					},
+				}
+			}
+		}
+
+	case "delay":
+		if duration, ok := params["duration"]; ok {
+			if val, parsed := normalizeNumber(duration); parsed {
+				if val > 0 && val <= 300 {
+					params["duration"] = val * 1000
+				} else {
+					params["duration"] = val
+				}
+			}
+		}
+
+	case "telegram":
+		if _, ok := params["chatId"]; !ok {
+			if chatID, hasLegacy := params["chat_id"]; hasLegacy {
+				params["chatId"] = chatID
+			}
+		}
+
+	case "filter":
+		if _, ok := params["inputData"]; !ok {
+			if input, hasInput := params["input"]; hasInput {
+				params["inputData"] = input
+			} else if arr, hasArr := params["array"]; hasArr {
+				params["inputData"] = arr
+			}
+		}
+		if op, ok := params["operator"].(string); ok {
+			params["operator"] = normalizeFilterOperator(op)
+		}
+
+	case "switch":
+		if _, ok := params["inputValue"]; !ok {
+			if val, hasValue := params["value"]; hasValue {
+				params["inputValue"] = val
+			}
+		}
+		if _, ok := params["defaultCase"]; !ok {
+			if def, hasDef := params["default"]; hasDef {
+				params["defaultCase"] = def
+			}
+		}
+	}
+}
+
+func normalizeFilterOperator(op string) string {
+	switch op {
+	case "==", "equals":
+		return "equals"
+	case "!=", "notEquals":
+		return "notEquals"
+	case ">", "greaterThan":
+		return "greaterThan"
+	case "<", "lessThan":
+		return "lessThan"
+	case ">=", "greaterOrEqual":
+		return "greaterOrEqual"
+	case "<=", "lessOrEqual":
+		return "lessOrEqual"
+	case "contains":
+		return "contains"
+	default:
+		return op
+	}
+}
+
+func extractOutputFieldFromRef(expr string) string {
+	trimmed := strings.TrimSpace(expr)
+	if strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
+		trimmed = strings.TrimPrefix(trimmed, "{{")
+		trimmed = strings.TrimSuffix(trimmed, "}}")
+	}
+	parts := strings.Split(trimmed, ".")
+	for i := 0; i < len(parts); i++ {
+		if parts[i] == "output" && i+1 < len(parts) {
+			return strings.Join(parts[i+1:], ".")
+		}
+	}
+	return trimmed
+}
+
+func normalizeNumber(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+func defaultNodeLabel(nodeType string) string {
+	switch nodeType {
+	case "manual-trigger":
+		return "Manual Trigger"
+	case "webhook-trigger":
+		return "Webhook Trigger"
+	case "telegram-trigger":
+		return "Telegram Trigger"
+	case "http-request":
+		return "HTTP Request"
+	case "if-condition":
+		return "If Condition"
+	case "set-data":
+		return "Set Data"
+	case "transform-data":
+		return "Transform Data"
+	case "json-parser":
+		return "JSON Parser"
+	case "groq":
+		return "Groq AI"
+	case "log":
+		return "Log"
+	case "delay":
+		return "Delay"
+	default:
+		return strings.ReplaceAll(strings.Title(strings.ReplaceAll(nodeType, "-", " ")), "  ", " ")
+	}
+}
+
+func defaultNodeDescription(nodeType string, params map[string]interface{}) string {
+	switch nodeType {
+	case "manual-trigger":
+		return "Starts the workflow manually and emits an initial empty payload."
+	case "webhook-trigger":
+		return "Starts the workflow when an HTTP webhook request is received."
+	case "telegram-trigger":
+		return "Starts the workflow when a Telegram message or file is received."
+	case "http-request":
+		method, _ := params["method"].(string)
+		url, _ := params["url"].(string)
+		if method == "" {
+			method = "GET"
+		}
+		if url == "" {
+			url = "the configured endpoint"
+		}
+		return fmt.Sprintf("Calls %s %s and outputs response status, headers, and body.", method, url)
+	case "groq":
+		return "Sends a prompt to Groq AI and outputs generated text and token usage metadata."
+	case "if-condition":
+		field, _ := params["field"].(string)
+		operator, _ := params["operator"].(string)
+		return fmt.Sprintf("Evaluates whether field '%s' %s the configured value and routes true/false branches.", field, operator)
+	case "set-data":
+		return "Creates a structured payload with predefined key-value pairs for downstream nodes."
+	case "log":
+		return "Writes a contextual message to execution logs for observability and debugging."
+	case "delay":
+		return "Pauses the workflow for the configured duration before continuing."
+	default:
+		return fmt.Sprintf("Executes node type '%s' with configured parameters and passes output to next nodes.", nodeType)
+	}
+}
+
+// getNodeMetadata returns metadata (subtitle, icon, color, category) for a node type
 func getNodeMetadata(nodeType string) (subtitle, icon, color, category string) {
 	switch nodeType {
 	// Triggers
@@ -906,6 +979,8 @@ func getNodeMetadata(nodeType string) (subtitle, icon, color, category string) {
 		return "Trigger", "IconPlayerPlay", "#3B82F6", "trigger"
 	case "webhook-trigger":
 		return "Trigger", "IconWebhook", "#06B6D4", "trigger"
+	case "telegram-trigger":
+		return "Trigger", "IconBrandTelegram", "#0088cc", "trigger"
 
 	// Logic
 	case "if-condition", "if-condition-v2":
@@ -946,10 +1021,6 @@ func getNodeMetadata(nodeType string) (subtitle, icon, color, category string) {
 		return "I/O", "IconBrandTelegram", "#0088cc", "io"
 
 	// AI
-	case "gpt":
-		return "AI", "IconBrain", "#10A37F", "ai"
-	case "claude":
-		return "AI", "IconSparkles", "#D97757", "ai"
 	case "groq":
 		return "AI", "IconBolt", "#F55036", "ai"
 
@@ -974,19 +1045,19 @@ func getNodeMetadata(nodeType string) (subtitle, icon, color, category string) {
 	}
 }
 
-// processAINodes aplica validaciones y defaults a los nodos generados por IA
+// processAINodes applies validations and defaults to AI-generated nodes
 func processAINodes(nodesAny []any) ([]any, error) {
 	if len(nodesAny) == 0 {
 		return nodesAny, nil
 	}
 
-	// Convertir []any a JSON
+	// Convert []any to JSON
 	nodesJSON, err := json.Marshal(nodesAny)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal nodes: %v", err)
 	}
 
-	// Primero unmarshaling a un struct intermedio que acepta position como objeto
+	// First unmarshal to an intermediate struct that accepts position as object
 	type NodeInput struct {
 		ID          string                 `json:"id"`
 		FlowID      string                 `json:"flowId"`
@@ -1015,17 +1086,17 @@ func processAINodes(nodesAny []any) ([]any, error) {
 		return nil, fmt.Errorf("failed to unmarshal nodes: %v", err)
 	}
 
-	// Convertir a []models.Node serializando los campos necesarios
+	// Convert to []models.Node by serializing the necessary fields
 	var nodes []models.Node
 	for _, input := range inputNodes {
 		fmt.Printf("🔍 [ProcessNodes] Processing node: id='%s', type='%s', label='%s'\n", input.ID, input.Type, input.Label)
 
-		// Si viene en formato React Flow con data anidado, extraer campos
+		// If it comes in React Flow format with nested data, extract fields
 		if input.Data != nil && len(input.Data) > 0 {
 			if label, ok := input.Data["label"].(string); ok && input.Label == "" {
 				input.Label = label
 			}
-			// SIEMPRE preferir el tipo real de data.type sobre el tipo React Flow
+			// ALWAYS prefer the real type from data.type over the React Flow type
 			if nodeType, ok := input.Data["type"].(string); ok {
 				input.Type = nodeType
 			}
@@ -1052,8 +1123,8 @@ func processAINodes(nodesAny []any) ([]any, error) {
 			}
 		}
 
-		// SIEMPRE auto-asignar metadata basada en el tipo de nodo
-		// Esto garantiza consistencia sin importar lo que la IA retorne
+		// ALWAYS auto-assign metadata based on node type
+		// This ensures consistency regardless of what the AI returns
 		if input.Type != "" {
 			subtitle, icon, color, category := getNodeMetadata(input.Type)
 			input.Subtitle = subtitle
@@ -1067,13 +1138,13 @@ func processAINodes(nodesAny []any) ([]any, error) {
 		fmt.Printf("✅ [ProcessNodes] Before creating models.Node: ID='%s', Type='%s', Label='%s', Subtitle='%s', Icon='%s', Color='%s', Category='%s'\n",
 			input.ID, input.Type, input.Label, input.Subtitle, input.Icon, input.Color, input.Category)
 
-		// Serializar position a JSON string
+		// Serialize position to JSON string
 		positionJSON, err := json.Marshal(input.Position)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal position for node %s: %v", input.Label, err)
 		}
 
-		// Serializar parameters
+		// Serialize parameters
 		var parametersJSON string
 		if input.Parameters != nil {
 			params, err := json.Marshal(input.Parameters)
@@ -1083,7 +1154,7 @@ func processAINodes(nodesAny []any) ([]any, error) {
 			parametersJSON = string(params)
 		}
 
-		// Serializar inputs
+		// Serialize inputs
 		var inputsJSON string
 		if input.Inputs != nil {
 			inputs, err := json.Marshal(input.Inputs)
@@ -1093,7 +1164,7 @@ func processAINodes(nodesAny []any) ([]any, error) {
 			inputsJSON = string(inputs)
 		}
 
-		// Serializar outputs
+		// Serialize outputs
 		var outputsJSON string
 		if input.Outputs != nil {
 			outputs, err := json.Marshal(input.Outputs)
@@ -1130,12 +1201,12 @@ func processAINodes(nodesAny []any) ([]any, error) {
 		nodes = append(nodes, node)
 	}
 
-	// Aplicar defaults y validar cada nodo
+	// Apply defaults and validate each node
 	for i := range nodes {
 		fmt.Printf("🔧 [ProcessNodes] Before ApplyDefaults: nodes[%d].Subtitle='%s', Icon='%s', Color='%s'\n",
 			i, nodes[i].Subtitle, nodes[i].Icon, nodes[i].Color)
 
-		// Aplicar defaults automáticos
+		// Apply automatic defaults
 		if err := validators.ApplyDefaults(&nodes[i]); err != nil {
 			return nil, fmt.Errorf("error applying defaults to node %s: %v", nodes[i].Label, err)
 		}
@@ -1143,7 +1214,7 @@ func processAINodes(nodesAny []any) ([]any, error) {
 		fmt.Printf("🔧 [ProcessNodes] After ApplyDefaults: nodes[%d].Subtitle='%s', Icon='%s', Color='%s'\n",
 			i, nodes[i].Subtitle, nodes[i].Icon, nodes[i].Color)
 
-		// Validar parámetros
+		// Validate parameters
 		if err := validators.ValidateNode(&nodes[i]); err != nil {
 			return nil, fmt.Errorf("validation error for node %s: %v", nodes[i].Label, err)
 		}
@@ -1152,16 +1223,16 @@ func processAINodes(nodesAny []any) ([]any, error) {
 			i, nodes[i].Subtitle, nodes[i].Icon, nodes[i].Color)
 	}
 
-	// Convertir de vuelta a formato React Flow con data anidado
+	// Convert back to React Flow format with nested data
 	var reactFlowNodes []map[string]interface{}
 	for _, node := range nodes {
-		// Parsear position de string a objeto
+		// Parse position from string to object
 		var position map[string]interface{}
 		if err := json.Unmarshal([]byte(node.Position), &position); err != nil {
 			position = map[string]interface{}{"x": 0, "y": 0}
 		}
 
-		// Parsear parameters de string a objeto
+		// Parse parameters from string to object
 		var parameters map[string]interface{}
 		if node.Parameters != "" {
 			if err := json.Unmarshal([]byte(node.Parameters), &parameters); err != nil {
@@ -1171,7 +1242,7 @@ func processAINodes(nodesAny []any) ([]any, error) {
 			parameters = make(map[string]interface{})
 		}
 
-		// Parsear inputs de string a array
+		// Parse inputs from string to array
 		var inputs []interface{}
 		if node.Inputs != "" {
 			if err := json.Unmarshal([]byte(node.Inputs), &inputs); err != nil {
@@ -1181,7 +1252,7 @@ func processAINodes(nodesAny []any) ([]any, error) {
 			inputs = []interface{}{}
 		}
 
-		// Parsear outputs de string a array
+		// Parse outputs from string to array
 		var outputs []interface{}
 		if node.Outputs != "" {
 			if err := json.Unmarshal([]byte(node.Outputs), &outputs); err != nil {
@@ -1191,14 +1262,14 @@ func processAINodes(nodesAny []any) ([]any, error) {
 			outputs = []interface{}{}
 		}
 
-		// Crear nodo en formato React Flow
+		// Create node in React Flow format
 		reactFlowNode := map[string]interface{}{
 			"id":       node.ID,
-			"type":     "custom", // React Flow usa "custom" como tipo de componente
+			"type":     "custom", // React Flow uses "custom" as the component type
 			"position": position,
 			"data": map[string]interface{}{
 				"label":       node.Label,
-				"type":        node.Type, // El tipo REAL del nodo va en data.type
+				"type":        node.Type, // The REAL node type goes in data.type
 				"subtitle":    node.Subtitle,
 				"icon":        node.Icon,
 				"color":       node.Color,
@@ -1218,7 +1289,7 @@ func processAINodes(nodesAny []any) ([]any, error) {
 		reactFlowNodes = append(reactFlowNodes, reactFlowNode)
 	}
 
-	// Log para verificar que la metadata está presente
+	// Log to verify metadata is present
 	for _, rfNode := range reactFlowNodes {
 		if data, ok := rfNode["data"].(map[string]interface{}); ok {
 			fmt.Printf("📦 React Flow node '%s': type='%s', subtitle='%s', icon='%s', color='%s', category='%s'\n",
@@ -1226,7 +1297,7 @@ func processAINodes(nodesAny []any) ([]any, error) {
 		}
 	}
 
-	// Convertir a []any
+	// Convert to []any
 	var result []any
 	for _, node := range reactFlowNodes {
 		result = append(result, node)

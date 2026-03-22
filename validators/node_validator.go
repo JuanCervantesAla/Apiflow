@@ -1,13 +1,14 @@
-package validators
+﻿package validators
 
 import (
 	"capyflow/api/models"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
-// NodeSchema define el schema de validación para un tipo de nodo
+// NodeSchema defines the validation schema for a node type
 type NodeSchema struct {
 	Type       string                     `json:"type"`
 	Required   []string                   `json:"required"`
@@ -24,16 +25,20 @@ type ParameterSchema struct {
 	Pattern     string        `json:"pattern,omitempty"`
 	Description string        `json:"description,omitempty"`
 	Example     string        `json:"example,omitempty"`
-	Advanced    bool          `json:"advanced,omitempty"` // Si true, solo mostrar en modo avanzado
+	Advanced    bool          `json:"advanced,omitempty"` // If true, only show in advanced mode
 }
 
-// Schemas de validación para cada tipo de nodo
+// Validation schemas for each node type
 var NodeSchemas = map[string]NodeSchema{
 	"set-data": {
-		Type:     "set-data",
-		Required: []string{"data"},
+		Type: "set-data",
+		// Frontend y nodo SetDataNode usan la clave "values"
+		// para el objeto de pares clave-valor. Alineamos el
+		// validador para evitar que el backend rechace nodos
+		// válidos que envían { "values": { ... } }.
+		Required: []string{"values"},
 		Parameters: map[string]ParameterSchema{
-			"data": {
+			"values": {
 				Type:     "object",
 				Required: true,
 			},
@@ -48,7 +53,7 @@ var NodeSchemas = map[string]NodeSchema{
 				Required:    true,
 				Description: "URL endpoint to request",
 				Example:     "https://api.example.com/data",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"method": {
 				Type:        "string",
@@ -56,20 +61,20 @@ var NodeSchemas = map[string]NodeSchema{
 				Enum:        []interface{}{"GET", "POST", "PUT", "DELETE", "PATCH"},
 				Default:     "GET",
 				Description: "HTTP method",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"headers": {
 				Type:        "object",
 				Required:    false,
 				Description: "Custom HTTP headers",
 				Example:     `{"Authorization": "Bearer token123"}`,
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"body": {
-				Type:        "string",
+				Type:        "object",
 				Required:    false,
 				Description: "Request body (for POST/PUT/PATCH)",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 		},
 	},
@@ -83,137 +88,63 @@ var NodeSchemas = map[string]NodeSchema{
 				Required:    true,
 				Description: "JSON string to parse",
 			},
+			"jsonString": {
+				Type:        "string",
+				Required:    false,
+				Description: "Alias used by frontend for JSON input",
+			},
 		},
 	},
 	"if-condition": {
 		Type:     "if-condition",
-		Required: []string{"left", "operator", "right"},
+		Required: []string{"field", "operator"},
 		Parameters: map[string]ParameterSchema{
-			"left": {
+			"field": {
 				Type:     "string",
 				Required: true,
 			},
 			"operator": {
 				Type:     "string",
 				Required: true,
-				Enum:     []interface{}{"==", "!=", ">", "<", ">=", "<=", "contains"},
+				Enum:     []interface{}{"==", "!=", ">", "<", ">=", "<=", "contains", "exists"},
+			},
+			"value": {
+				Type:     "string",
+				Required: false,
+			},
+			"left": {
+				Type:     "string",
+				Required: false,
 			},
 			"right": {
-				Type:     "string",
-				Required: true,
+				Type:     "",
+				Required: false,
 			},
 		},
 	},
 	"transform-data": {
 		Type:     "transform-data",
-		Required: []string{"operation", "field"},
+		Required: []string{"transformations"},
 		Parameters: map[string]ParameterSchema{
-			"operation": {
-				Type:     "string",
-				Required: true,
-				Enum:     []interface{}{"map", "filter"},
-			},
-			"field": {
-				Type:     "string",
-				Required: true,
-			},
-			"multiply": {
-				Type:     "number",
-				Required: false,
-			},
-			"equals": {
-				Type:     "string",
-				Required: false,
+			"transformations": {
+				Type:        "array",
+				Required:    true,
+				Description: "List of transformations to apply",
 			},
 		},
 	},
 	"log": {
 		Type:     "log",
-		Required: []string{},
+		Required: []string{"message"},
 		Parameters: map[string]ParameterSchema{
-			"label": {
+			"message": {
+				Type:     "string",
+				Required: true,
+			},
+			"level": {
 				Type:     "string",
 				Required: false,
-				Default:  "Log",
-			},
-		},
-	},
-	// Nodos AI
-	"gpt": {
-		Type:     "gpt",
-		Required: []string{"prompt"},
-		Parameters: map[string]ParameterSchema{
-			"prompt": {
-				Type:        "string",
-				Required:    true,
-				Description: "The prompt to send to GPT",
-				Example:     "Summarize this text: {{input}}",
-				Advanced:    false, // BÁSICO: Campo principal
-			},
-			"model": {
-				Type:        "string",
-				Required:    false,
-				Default:     "gpt-4",
-				Enum:        []interface{}{"gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"},
-				Description: "GPT model to use",
-				Advanced:    true, // AVANZADO: Auto-usa default en básico
-			},
-			"temperature": {
-				Type:        "number",
-				Required:    false,
-				Default:     0.7,
-				Min:         floatPtr(0.0),
-				Max:         floatPtr(2.0),
-				Description: "Randomness of the output (0-2)",
-				Advanced:    true, // AVANZADO: Parámetro técnico
-			},
-			"max_tokens": {
-				Type:        "number",
-				Required:    false,
-				Default:     1000,
-				Min:         floatPtr(1),
-				Max:         floatPtr(4096),
-				Description: "Maximum tokens in response",
-				Advanced:    true, // AVANZADO: Parámetro técnico
-			},
-		},
-	},
-	"claude": {
-		Type:     "claude",
-		Required: []string{"prompt"},
-		Parameters: map[string]ParameterSchema{
-			"prompt": {
-				Type:        "string",
-				Required:    true,
-				Description: "The prompt to send to Claude",
-				Example:     "Analyze this data: {{input}}",
-				Advanced:    false, // BÁSICO
-			},
-			"model": {
-				Type:        "string",
-				Required:    false,
-				Default:     "claude-3-5-sonnet-20241022",
-				Enum:        []interface{}{"claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-haiku-20240307"},
-				Description: "Claude model to use",
-				Advanced:    true, // AVANZADO
-			},
-			"temperature": {
-				Type:        "number",
-				Required:    false,
-				Default:     0.7,
-				Min:         floatPtr(0.0),
-				Max:         floatPtr(1.0),
-				Description: "Randomness of the output (0-1)",
-				Advanced:    true, // AVANZADO
-			},
-			"max_tokens": {
-				Type:        "number",
-				Required:    false,
-				Default:     1000,
-				Min:         floatPtr(1),
-				Max:         floatPtr(4096),
-				Description: "Maximum tokens in response",
-				Advanced:    true, // AVANZADO
+				Default:  "info",
 			},
 		},
 	},
@@ -226,7 +157,7 @@ var NodeSchemas = map[string]NodeSchema{
 				Required:    true,
 				Description: "The prompt to send to Groq",
 				Example:     "Analyze this data: {{input}}",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"model": {
 				Type:        "string",
@@ -234,7 +165,7 @@ var NodeSchemas = map[string]NodeSchema{
 				Default:     "llama-3.3-70b-versatile",
 				Enum:        []interface{}{"llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"},
 				Description: "Groq model to use (API key configured in .env)",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"temperature": {
 				Type:        "number",
@@ -243,7 +174,7 @@ var NodeSchemas = map[string]NodeSchema{
 				Min:         floatPtr(0.0),
 				Max:         floatPtr(2.0),
 				Description: "Randomness of the output (0-2)",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"maxTokens": {
 				Type:        "number",
@@ -252,14 +183,14 @@ var NodeSchemas = map[string]NodeSchema{
 				Min:         floatPtr(1),
 				Max:         floatPtr(32768),
 				Description: "Maximum tokens in response",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"systemPrompt": {
 				Type:        "string",
 				Required:    false,
 				Description: "System prompt to set context/instructions",
 				Example:     "You are a helpful assistant that analyzes data.",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 		},
 	},
@@ -274,26 +205,26 @@ var NodeSchemas = map[string]NodeSchema{
 				Description: "Recipient email address",
 				Example:     "user@example.com",
 				Pattern:     "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"subject": {
 				Type:        "string",
 				Required:    true,
 				Description: "Email subject line",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"body": {
 				Type:        "string",
 				Required:    false,
 				Default:     "",
 				Description: "Email body content",
-				Advanced:    false, // BÁSICO (cuerpo es importante)
+				Advanced:    false, // BASIC (body is important)
 			},
 			"from": {
 				Type:        "string",
 				Required:    false,
 				Description: "Sender email (if different from default)",
-				Advanced:    true, // AVANZADO (usa default del sistema)
+				Advanced:    true, // ADVANCED (uses system default)
 			},
 		},
 	},
@@ -307,30 +238,56 @@ var NodeSchemas = map[string]NodeSchema{
 				Required:    true,
 				Description: "Message to send",
 			},
-			"chat_id": {
+			"chatId": {
 				Type:        "string",
 				Required:    false,
 				Description: "Telegram chat ID (optional if configured globally)",
+			},
+			"parseMode": {
+				Type:        "string",
+				Required:    false,
+				Description: "Telegram parse mode (Markdown/HTML)",
 			},
 		},
 	},
 	// Loop
 	"loop": {
 		Type:     "loop",
-		Required: []string{"items"},
+		Required: []string{"arraySource"},
 		Parameters: map[string]ParameterSchema{
-			"items": {
-				Type:        "array",
+			"arraySource": {
+				Type:        "string",
 				Required:    true,
-				Description: "Array of items to iterate over",
+				Description: "Path to the array in context (e.g. data, items)",
 			},
-			"max_iterations": {
-				Type:        "number",
+			"operation": {
+				Type:        "string",
 				Required:    false,
-				Default:     100,
-				Min:         floatPtr(1),
-				Max:         floatPtr(1000),
-				Description: "Maximum iterations to prevent infinite loops",
+				Default:     "forEach",
+				Enum:        []interface{}{"forEach", "map", "filter"},
+				Description: "Type of loop operation to perform",
+			},
+			"mapExpression": {
+				Type:        "string",
+				Required:    false,
+				Description: "For 'map': expression to apply to each item (use {{item}} and {{index}})",
+			},
+			"filterExpr": {
+				Type:        "string",
+				Required:    false,
+				Description: "For 'filter': condition that each item must meet",
+			},
+			"itemVariable": {
+				Type:        "string",
+				Required:    false,
+				Default:     "item",
+				Description: "Variable name to reference each item in expressions",
+			},
+			"indexVariable": {
+				Type:        "string",
+				Required:    false,
+				Default:     "index",
+				Description: "Variable name for the loop index",
 			},
 		},
 	},
@@ -342,32 +299,44 @@ var NodeSchemas = map[string]NodeSchema{
 			"duration": {
 				Type:        "number",
 				Required:    true,
-				Min:         floatPtr(0),
-				Max:         floatPtr(300),
-				Description: "Delay duration in seconds (max 5 minutes)",
-				Example:     "5",
+				Min:         floatPtr(1),
+				Max:         floatPtr(300000),
+				Description: "Delay duration in milliseconds (max 300000ms = 5 minutes)",
+				Example:     "1000",
 			},
 		},
 	},
 	// Filter
 	"filter": {
 		Type:     "filter",
-		Required: []string{"field", "operator", "value"},
+		Required: []string{"inputData", "operator"},
 		Parameters: map[string]ParameterSchema{
+			"inputData": {
+				Type:        "",
+				Required:    true,
+				Description: "Array input data to filter",
+			},
+			"mode": {
+				Type:        "string",
+				Required:    false,
+				Enum:        []interface{}{"keep", "remove"},
+				Default:     "keep",
+				Description: "Keep or remove matching elements",
+			},
 			"field": {
 				Type:        "string",
-				Required:    true,
+				Required:    false,
 				Description: "Field name to filter on",
 			},
 			"operator": {
 				Type:        "string",
 				Required:    true,
-				Enum:        []interface{}{"==", "!=", ">", "<", ">=", "<=", "contains"},
+				Enum:        []interface{}{"equals", "notEquals", "contains", "startsWith", "endsWith", "greaterThan", "lessThan", "greaterOrEqual", "lessOrEqual", "isEmpty", "isNotEmpty"},
 				Description: "Comparison operator",
 			},
 			"value": {
-				Type:        "string",
-				Required:    true,
+				Type:        "",
+				Required:    false,
 				Description: "Value to compare against",
 			},
 		},
@@ -383,21 +352,21 @@ var NodeSchemas = map[string]NodeSchema{
 				Enum:        []interface{}{"postgres", "mysql", "sqlite3"},
 				Description: "Database driver to use",
 				Example:     "postgres",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"connectionUrl": {
 				Type:        "string",
 				Required:    true,
 				Description: "Database connection URL/DSN",
 				Example:     "postgres://user:pass@localhost:5432/dbname?sslmode=disable",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"query": {
 				Type:        "string",
 				Required:    true,
 				Description: "SQL query to execute (use {{variable}} for interpolation)",
 				Example:     "SELECT * FROM users WHERE id = {{userId}}",
-				Advanced:    false, // BÁSICO
+				Advanced:    false, // BASIC
 			},
 			"timeout": {
 				Type:        "number",
@@ -406,7 +375,7 @@ var NodeSchemas = map[string]NodeSchema{
 				Min:         floatPtr(1000),
 				Max:         floatPtr(300000),
 				Description: "Query timeout in milliseconds",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"maxRetries": {
 				Type:        "number",
@@ -415,7 +384,7 @@ var NodeSchemas = map[string]NodeSchema{
 				Min:         floatPtr(0),
 				Max:         floatPtr(5),
 				Description: "Maximum number of retries on failure",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"retryDelay": {
 				Type:        "number",
@@ -424,51 +393,81 @@ var NodeSchemas = map[string]NodeSchema{
 				Min:         floatPtr(100),
 				Max:         floatPtr(10000),
 				Description: "Delay between retries in milliseconds",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"queryParams": {
 				Type:        "object",
 				Required:    false,
 				Description: "Named parameters for parameterized queries",
 				Example:     `{"userId": 123, "status": "active"}`,
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 			"returnMetadata": {
 				Type:        "boolean",
 				Required:    false,
 				Default:     false,
 				Description: "Include query metadata in response",
-				Advanced:    true, // AVANZADO
+				Advanced:    true, // ADVANCED
 			},
 		},
 	},
 	// Split
 	"split": {
 		Type:     "split",
-		Required: []string{"array", "chunkSize"},
+		Required: []string{"inputData"},
 		Parameters: map[string]ParameterSchema{
-			"array": {
-				Type:        "array",
+			"inputData": {
+				Type:        "",
 				Required:    true,
-				Description: "Array to split into chunks",
+				Description: "Array input to split",
 			},
-			"chunkSize": {
+			"mode": {
+				Type:        "string",
+				Required:    false,
+				Enum:        []interface{}{"items", "batches", "field"},
+				Default:     "items",
+				Description: "Split mode",
+			},
+			"batchSize": {
 				Type:        "number",
-				Required:    true,
+				Required:    false,
 				Min:         floatPtr(1),
-				Description: "Size of each chunk",
+				Description: "Size of each batch (when mode=batches)",
+			},
+			"field": {
+				Type:        "string",
+				Required:    false,
+				Description: "Field to extract (when mode=field)",
 			},
 		},
 	},
 	// Merge
 	"merge": {
 		Type:     "merge",
-		Required: []string{"arrays"},
+		Required: []string{},
 		Parameters: map[string]ParameterSchema{
-			"arrays": {
-				Type:        "array",
-				Required:    true,
-				Description: "Arrays to merge",
+			"mode": {
+				Type:        "string",
+				Required:    false,
+				Enum:        []interface{}{"append", "combine", "merge"},
+				Default:     "append",
+				Description: "Merge mode",
+			},
+			"input1": {
+				Type:     "",
+				Required: false,
+			},
+			"input2": {
+				Type:     "",
+				Required: false,
+			},
+			"input3": {
+				Type:     "",
+				Required: false,
+			},
+			"input4": {
+				Type:     "",
+				Required: false,
 			},
 		},
 	},
@@ -488,16 +487,16 @@ var NodeSchemas = map[string]NodeSchema{
 	// Sort
 	"sort": {
 		Type:     "sort",
-		Required: []string{"array", "field"},
+		Required: []string{"inputData"},
 		Parameters: map[string]ParameterSchema{
-			"array": {
-				Type:        "array",
+			"inputData": {
+				Type:        "",
 				Required:    true,
 				Description: "Array to sort",
 			},
 			"field": {
 				Type:        "string",
-				Required:    true,
+				Required:    false,
 				Description: "Field to sort by",
 			},
 			"order": {
@@ -512,9 +511,9 @@ var NodeSchemas = map[string]NodeSchema{
 	// CSV Parser
 	"csv-parser": {
 		Type:     "csv-parser",
-		Required: []string{"input"},
+		Required: []string{"inputData"},
 		Parameters: map[string]ParameterSchema{
-			"input": {
+			"inputData": {
 				Type:        "string",
 				Required:    true,
 				Description: "CSV string to parse",
@@ -536,11 +535,11 @@ var NodeSchemas = map[string]NodeSchema{
 	// Regex Extract
 	"regex-extract": {
 		Type:     "regex-extract",
-		Required: []string{"input", "pattern"},
+		Required: []string{"pattern"},
 		Parameters: map[string]ParameterSchema{
-			"input": {
+			"inputData": {
 				Type:        "string",
-				Required:    true,
+				Required:    false,
 				Description: "Input string to extract from",
 			},
 			"pattern": {
@@ -560,11 +559,11 @@ var NodeSchemas = map[string]NodeSchema{
 	// Switch (multiple conditions)
 	"switch": {
 		Type:     "switch",
-		Required: []string{"value", "cases"},
+		Required: []string{"cases"},
 		Parameters: map[string]ParameterSchema{
-			"value": {
-				Type:        "string",
-				Required:    true,
+			"inputValue": {
+				Type:        "",
+				Required:    false,
 				Description: "Value to match",
 			},
 			"cases": {
@@ -572,7 +571,7 @@ var NodeSchemas = map[string]NodeSchema{
 				Required:    true,
 				Description: "Array of {value, output} cases",
 			},
-			"default": {
+			"defaultCase": {
 				Type:        "string",
 				Required:    false,
 				Description: "Default output if no match",
@@ -582,13 +581,12 @@ var NodeSchemas = map[string]NodeSchema{
 	// Error Handler
 	"error-handler": {
 		Type:     "error-handler",
-		Required: []string{},
+		Required: []string{"inputData"},
 		Parameters: map[string]ParameterSchema{
-			"retry": {
-				Type:        "boolean",
-				Required:    false,
-				Default:     false,
-				Description: "Retry on error",
+			"inputData": {
+				Type:        "",
+				Required:    true,
+				Description: "Input data to inspect for errors",
 			},
 			"maxRetries": {
 				Type:        "number",
@@ -598,8 +596,15 @@ var NodeSchemas = map[string]NodeSchema{
 				Max:         floatPtr(10),
 				Description: "Maximum retry attempts",
 			},
-			"fallbackValue": {
+			"fallbackMode": {
 				Type:        "string",
+				Required:    false,
+				Default:     "ignore",
+				Enum:        []interface{}{"ignore", "default", "stop"},
+				Description: "Fallback mode when retries are exhausted",
+			},
+			"defaultValue": {
+				Type:        "",
 				Required:    false,
 				Description: "Fallback value on error",
 			},
@@ -610,16 +615,55 @@ var NodeSchemas = map[string]NodeSchema{
 		Type:     "stop",
 		Required: []string{},
 		Parameters: map[string]ParameterSchema{
-			"message": {
+			"condition": {
+				Type:        "string",
+				Required:    false,
+				Default:     "always",
+				Enum:        []interface{}{"always", "if-true", "if-false", "if-error"},
+				Description: "Stop condition",
+			},
+			"inputValue": {
+				Type:        "",
+				Required:    false,
+				Description: "Value to evaluate",
+			},
+			"stopMessage": {
 				Type:        "string",
 				Required:    false,
 				Description: "Stop message",
+			},
+			"stopCode": {
+				Type:        "string",
+				Required:    false,
+				Default:     "success",
+				Enum:        []interface{}{"success", "error"},
+				Description: "Stop result code",
 			},
 		},
 	},
 	// Manual Trigger
 	"manual-trigger": {
 		Type:       "manual-trigger",
+		Required:   []string{},
+		Parameters: map[string]ParameterSchema{},
+	},
+	// Cron Trigger
+	"cron-trigger": {
+		Type:     "cron-trigger",
+		Required: []string{"intervalMinutes"},
+		Parameters: map[string]ParameterSchema{
+			"intervalMinutes": {
+				Type:        "number",
+				Required:    true,
+				Min:         floatPtr(1),
+				Description: "Interval in minutes between executions",
+				Example:     "60",
+			},
+		},
+	},
+	// Telegram Trigger
+	"telegram-trigger": {
+		Type:       "telegram-trigger",
 		Required:   []string{},
 		Parameters: map[string]ParameterSchema{},
 	},
@@ -649,7 +693,7 @@ func floatPtr(f float64) *float64 {
 	return &f
 }
 
-// getRegisteredNodeTypes retorna la lista de tipos de nodos válidos
+// getRegisteredNodeTypes returns the list of valid node types
 func getRegisteredNodeTypes() []string {
 	types := make([]string, 0, len(NodeSchemas))
 	for nodeType := range NodeSchemas {
@@ -658,25 +702,25 @@ func getRegisteredNodeTypes() []string {
 	return types
 }
 
-// GetNodeSchema devuelve el schema de un tipo de nodo (para el frontend)
+// GetNodeSchema returns the schema for a node type (for the frontend)
 func GetNodeSchema(nodeType string) (NodeSchema, bool) {
 	schema, exists := NodeSchemas[nodeType]
 	return schema, exists
 }
 
-// GetAllNodeSchemas devuelve todos los schemas de nodos disponibles
+// GetAllNodeSchemas returns all available node schemas
 func GetAllNodeSchemas() map[string]NodeSchema {
 	return NodeSchemas
 }
 
-// GetNodeSchemaFiltered devuelve el schema filtrado según el modo (basic o advanced)
+// GetNodeSchemaFiltered returns the schema filtered by mode (basic or advanced)
 func GetNodeSchemaFiltered(nodeType string, mode string) (NodeSchema, bool) {
 	schema, exists := NodeSchemas[nodeType]
 	if !exists {
 		return NodeSchema{}, false
 	}
 
-	// Si el modo es "basic", filtrar solo parámetros no-avanzados
+	// If mode is "basic", filter only non-advanced parameters
 	if mode == "basic" {
 		filteredParams := make(map[string]ParameterSchema)
 		for key, param := range schema.Parameters {
@@ -690,13 +734,13 @@ func GetNodeSchemaFiltered(nodeType string, mode string) (NodeSchema, bool) {
 	return schema, true
 }
 
-// GetAllNodeSchemasFiltered devuelve todos los schemas filtrados según el modo
+// GetAllNodeSchemasFiltered returns all schemas filtered by mode
 func GetAllNodeSchemasFiltered(mode string) map[string]NodeSchema {
 	if mode != "basic" {
 		return NodeSchemas
 	}
 
-	// Filtrar todos los schemas para modo básico
+	// Filter all schemas for basic mode
 	filtered := make(map[string]NodeSchema)
 	for nodeType, schema := range NodeSchemas {
 		filteredParams := make(map[string]ParameterSchema)
@@ -712,24 +756,20 @@ func GetAllNodeSchemasFiltered(mode string) map[string]NodeSchema {
 	return filtered
 }
 
-// ApplyDefaults completa automáticamente los parámetros con sus valores por defecto
+// ApplyDefaults automatically fills in parameters with their default values
 func ApplyDefaults(node *models.Node) error {
 	schema, exists := NodeSchemas[node.Type]
 	if !exists {
-		// Si no hay schema, no aplicar defaults
+		// If no schema exists, don't apply defaults
 		return nil
 	}
 
-	var params map[string]interface{}
-	if node.Parameters == "" {
-		params = make(map[string]interface{})
-	} else {
-		if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
-			return fmt.Errorf("invalid JSON parameters for node %s", node.Label)
-		}
+	params, err := parseNodeParameters(node)
+	if err != nil {
+		return err
 	}
 
-	// Aplicar defaults para parámetros no provistos
+	// Apply defaults for parameters not provided
 	modified := false
 	for paramName, paramSchema := range schema.Parameters {
 		if _, exists := params[paramName]; !exists && paramSchema.Default != nil {
@@ -738,7 +778,7 @@ func ApplyDefaults(node *models.Node) error {
 		}
 	}
 
-	// Si se modificó algo, actualizar el JSON
+	// If something was modified, update the JSON
 	if modified {
 		updatedJSON, err := json.Marshal(params)
 		if err != nil {
@@ -750,11 +790,36 @@ func ApplyDefaults(node *models.Node) error {
 	return nil
 }
 
-// ValidateNode valida los parámetros de un nodo según su schema
+func parseNodeParameters(node *models.Node) (map[string]interface{}, error) {
+	trimmed := strings.TrimSpace(node.Parameters)
+	if trimmed == "" {
+		return make(map[string]interface{}), nil
+	}
+
+	var params map[string]interface{}
+	if err := json.Unmarshal([]byte(node.Parameters), &params); err == nil {
+		return params, nil
+	}
+
+	// Backward compatibility: older flows may have stored raw CSV/text directly
+	// in trigger parameters. Normalize to a JSON object so validation can continue.
+	if node.Type == "manual-trigger" || node.Type == "telegram-trigger" {
+		params = map[string]interface{}{"csvContent": node.Parameters}
+		updatedJSON, err := json.Marshal(params)
+		if err == nil {
+			node.Parameters = string(updatedJSON)
+		}
+		return params, nil
+	}
+
+	return nil, fmt.Errorf("invalid JSON parameters for node %s", node.Label)
+}
+
+// ValidateNode validates a node's parameters against its schema
 func ValidateNode(node *models.Node) error {
 	schema, exists := NodeSchemas[node.Type]
 	if !exists {
-		// RECHAZAR nodos con tipos no registrados
+		// REJECT nodes with unregistered types
 		return fmt.Errorf("node type '%s' is not registered in NodeSchemas. Valid types are: %v",
 			node.Type, getRegisteredNodeTypes())
 	}
@@ -766,23 +831,122 @@ func ValidateNode(node *models.Node) error {
 		return nil
 	}
 
-	var params map[string]interface{}
-	if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
-		return fmt.Errorf("invalid JSON parameters for node %s", node.Label)
+	params, err := parseNodeParameters(node)
+	if err != nil {
+		return err
 	}
 
-	// Validar campos requeridos
+	// Backwards compatibility and normalization for set-data:
+	// older flows and some AI prompts may still use "data" instead of "values".
+	if node.Type == "set-data" {
+		if _, hasValues := params["values"]; !hasValues {
+			if legacy, hasData := params["data"]; hasData {
+				params["values"] = legacy
+				delete(params, "data")
+				if updated, err := json.Marshal(params); err == nil {
+					node.Parameters = string(updated)
+				}
+			}
+		}
+	}
+
+	if node.Type == "if-condition" {
+		if _, hasField := params["field"]; !hasField {
+			if legacy, hasLegacy := params["left"]; hasLegacy {
+				params["field"] = legacy
+			}
+		}
+		if _, hasValue := params["value"]; !hasValue {
+			if legacy, hasLegacy := params["right"]; hasLegacy {
+				params["value"] = legacy
+			}
+		}
+		if updated, err := json.Marshal(params); err == nil {
+			node.Parameters = string(updated)
+		}
+	}
+
+	// Backwards compatibility for json-parser:
+	// frontend uses jsonString while legacy/runtime may use json.
+	if node.Type == "json-parser" {
+		if _, hasJSON := params["json"]; !hasJSON {
+			if modern, hasJSONString := params["jsonString"]; hasJSONString {
+				params["json"] = modern
+				if updated, err := json.Marshal(params); err == nil {
+					node.Parameters = string(updated)
+				}
+			}
+		}
+	}
+
+	// Backwards compatibility for csv-parser:
+	// older flows may still use "input" instead of "inputData".
+	if node.Type == "csv-parser" {
+		if _, hasInputData := params["inputData"]; !hasInputData {
+			if legacy, hasInput := params["input"]; hasInput {
+				params["inputData"] = legacy
+				delete(params, "input")
+				if updated, err := json.Marshal(params); err == nil {
+					node.Parameters = string(updated)
+				}
+			}
+		}
+	}
+
+	if node.Type == "telegram" {
+		if _, hasChatID := params["chatId"]; !hasChatID {
+			if legacy, hasLegacy := params["chat_id"]; hasLegacy {
+				params["chatId"] = legacy
+				delete(params, "chat_id")
+				if updated, err := json.Marshal(params); err == nil {
+					node.Parameters = string(updated)
+				}
+			}
+		}
+	}
+
+	if node.Type == "regex-extract" {
+		if _, hasInputData := params["inputData"]; !hasInputData {
+			if legacy, hasLegacy := params["input"]; hasLegacy {
+				params["inputData"] = legacy
+				delete(params, "input")
+				if updated, err := json.Marshal(params); err == nil {
+					node.Parameters = string(updated)
+				}
+			}
+		}
+	}
+
+	if node.Type == "switch" {
+		if _, hasInputValue := params["inputValue"]; !hasInputValue {
+			if legacy, hasLegacy := params["value"]; hasLegacy {
+				params["inputValue"] = legacy
+				delete(params, "value")
+			}
+		}
+		if _, hasDefaultCase := params["defaultCase"]; !hasDefaultCase {
+			if legacy, hasLegacy := params["default"]; hasLegacy {
+				params["defaultCase"] = legacy
+				delete(params, "default")
+			}
+		}
+		if updated, err := json.Marshal(params); err == nil {
+			node.Parameters = string(updated)
+		}
+	}
+
+	// Validate required fields
 	for _, required := range schema.Required {
 		if _, ok := params[required]; !ok {
 			return fmt.Errorf("node %s (%s) missing required parameter: %s", node.Label, node.Type, required)
 		}
 	}
 
-	// Validar cada parámetro
+	// Validate each parameter
 	for key, value := range params {
 		paramSchema, ok := schema.Parameters[key]
 		if !ok {
-			continue // Permitir parámetros extra
+			continue // Allow extra parameters
 		}
 
 		if err := validateParameter(key, value, paramSchema); err != nil {
@@ -794,7 +958,7 @@ func ValidateNode(node *models.Node) error {
 }
 
 func validateParameter(name string, value interface{}, schema ParameterSchema) error {
-	// Validar tipo
+	// Validate type
 	switch schema.Type {
 	case "string":
 		if _, ok := value.(string); !ok {
@@ -821,7 +985,7 @@ func validateParameter(name string, value interface{}, schema ParameterSchema) e
 		}
 	}
 
-	// Validar enum
+	// Validate enum
 	if len(schema.Enum) > 0 {
 		valid := false
 		for _, enumVal := range schema.Enum {
@@ -835,7 +999,7 @@ func validateParameter(name string, value interface{}, schema ParameterSchema) e
 		}
 	}
 
-	// Validar min/max para números
+	// Validate min/max for numbers
 	if schema.Type == "number" {
 		var num float64
 		switch v := value.(type) {

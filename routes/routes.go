@@ -14,7 +14,7 @@ import (
 func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	router := mux.NewRouter()
 
-	// Middleware global CORS
+	// Global CORS Middleware
 	router.Use(middleware.CORS)
 
 	// Services
@@ -89,10 +89,10 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	protected.HandleFunc("/analytics/flows/{id}/execution", analyticsHandler.UpdateExecutionStats).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/analytics/flows/{id}/update-time", analyticsHandler.UpdateCreationTime).Methods("POST", "OPTIONS")
 
-	// Webhooks (protegidas para obtener URL)
+	// Webhooks (protected to get URL)
 	protected.HandleFunc("/webhooks/{id}/url", webhookHandler.GetWebhookURL).Methods("GET", "OPTIONS")
 
-	// Webhooks públicos (para recibir webhooks externos)
+	// Public webhooks (to receive external webhooks)
 	api.HandleFunc("/webhooks/{id}", webhookHandler.HandleWebhook).Methods("POST", "GET", "OPTIONS")
 
 	// WebSocket Ticket
