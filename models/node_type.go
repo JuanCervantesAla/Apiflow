@@ -17,14 +17,14 @@ const (
 type NodeType struct {
 	ID          string       `json:"id" gorm:"primaryKey"`
 	Name        string       `json:"name" gorm:"not null"`
-	Type        string       `json:"type" gorm:"uniqueIndex;not null"` // Identificador único
+	Type        string       `json:"type" gorm:"uniqueIndex;not null"` // Unique identifier
 	Category    NodeCategory `json:"category" gorm:"not null"`
 	Description string       `json:"description"`
 	Icon        string       `json:"icon"`
 	Color       string       `json:"color"`
 	Version     string       `json:"version" gorm:"default:1.0.0"`
 
-	// Configuración por defecto
+	// Default configuration
 	DefaultInputs  string `json:"defaultInputs" gorm:"type:text"`  // JSON
 	DefaultOutputs string `json:"defaultOutputs" gorm:"type:text"` // JSON
 	DefaultParams  string `json:"defaultParams" gorm:"type:text"`  // JSON

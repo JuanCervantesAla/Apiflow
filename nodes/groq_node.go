@@ -98,14 +98,16 @@ func (n *GroqNode) Execute(
 	// Build messages
 	messages := []GroqMessage{}
 
-	// Add system prompt if provided
+	// Always enforce English responses via system message
+	baseSystemPrompt := "You are an AI assistant. Always respond in English."
 	if params.SystemPrompt != "" {
 		systemPrompt := interpolateString(params.SystemPrompt, prev)
-		messages = append(messages, GroqMessage{
-			Role:    "system",
-			Content: systemPrompt,
-		})
+		baseSystemPrompt = baseSystemPrompt + "\n\n" + systemPrompt
 	}
+	messages = append(messages, GroqMessage{
+		Role:    "system",
+		Content: baseSystemPrompt,
+	})
 
 	// Add user prompt
 	messages = append(messages, GroqMessage{

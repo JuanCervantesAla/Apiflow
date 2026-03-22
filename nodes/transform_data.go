@@ -11,10 +11,10 @@ import (
 type TransformDataNode struct{}
 
 type Transformation struct {
-	Source    string `json:"source"`    // Campo origen con dot notation: "body.user.name"
-	Target    string `json:"target"`    // Campo destino: "userName"
+	Source    string `json:"source"`    // Source field with dot notation: "body.user.name"
+	Target    string `json:"target"`    // Destination field: "userName"
 	Operation string `json:"operation"` // extract, calculate, concat, default
-	Value     string `json:"value"`     // Valor adicional para operaciones
+	Value     string `json:"value"`     // Additional value for operations
 }
 
 type TransformParams struct {
@@ -32,7 +32,7 @@ func (n *TransformDataNode) Execute(node *models.Node, context map[string]map[st
 		return nil, fmt.Errorf("no transformations defined")
 	}
 
-	// Obtener el output del nodo anterior (context unificado)
+	// Get the output from the previous node (unified context)
 	var prev map[string]interface{}
 	for _, nodeOutput := range context {
 		if nodeOutput != nil && len(nodeOutput) > 0 {
@@ -55,21 +55,21 @@ func (n *TransformDataNode) Execute(node *models.Node, context map[string]map[st
 	for _, transform := range p.Transformations {
 		switch transform.Operation {
 		case "extract":
-			// Extraer valor de campo anidado
+			// Extract value from nested field
 			value := getNestedValue(prev, transform.Source)
 			if value != nil {
 				result[transform.Target] = value
 			}
 
 		case "rename":
-			// Renombrar campo (igual que extract)
+			// Rename field (same as extract)
 			value := getNestedValue(prev, transform.Source)
 			if value != nil {
 				result[transform.Target] = value
 			}
 
 		case "default":
-			// Usar valor por defecto si no existe
+			// Use default value if it doesn't exist
 			value := getNestedValue(prev, transform.Source)
 			if value != nil {
 				result[transform.Target] = value
@@ -78,12 +78,12 @@ func (n *TransformDataNode) Execute(node *models.Node, context map[string]map[st
 			}
 
 		case "calculate":
-			// Operaciones matemáticas simples
+			// Simple math operations
 			value := calculateExpression(transform.Value, context)
 			result[transform.Target] = value
 
 		case "concat":
-			// Concatenar strings con interpolación
+			// Concatenate strings with interpolation
 			interpolated := interpolateString(transform.Value, context)
 			result[transform.Target] = interpolated
 
@@ -95,8 +95,8 @@ func (n *TransformDataNode) Execute(node *models.Node, context map[string]map[st
 	return result, nil
 }
 
-// getNestedValue obtiene un valor anidado usando dot notation
-// Ejemplo: "body.user.name" → prev["body"]["user"]["name"]
+// getNestedValue gets a nested value using dot notation
+// Example: "body.user.name" → prev["body"]["user"]["name"]
 func getNestedValue(data map[string]interface{}, path string) interface{} {
 	if path == "" {
 		return nil
@@ -115,12 +115,12 @@ func getNestedValue(data map[string]interface{}, path string) interface{} {
 			return nil
 		}
 
-		// Si es el último elemento, retornar el valor
+		// If it's the last element, return the value
 		if i == len(parts)-1 {
 			return value
 		}
 
-		// Si no es el último, debe ser un map para continuar
+		// If it's not the last, it must be a map to continue
 		if nextMap, ok := value.(map[string]interface{}); ok {
 			current = nextMap
 		} else {
@@ -131,8 +131,8 @@ func getNestedValue(data map[string]interface{}, path string) interface{} {
 	return nil
 }
 
-// calculateExpression evalúa expresiones matemáticas simples
-// Soporta: +, -, *, /, y variables del contexto
+// calculateExpression evaluates simple math expressions
+// Supports: +, -, *, /, and context variables
 func calculateExpression(expr string, context map[string]map[string]interface{}) interface{} {
 	// Interpolate variables first
 	interpolated := interpolateString(expr, context)

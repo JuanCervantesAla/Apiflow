@@ -31,7 +31,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		RespondError(w, http.StatusBadRequest, "Datos inválidos")
+		RespondError(w, http.StatusBadRequest, "Invalid data")
 		return
 	}
 
@@ -107,13 +107,13 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userId")
 	if userID == nil {
-		RespondError(w, http.StatusUnauthorized, "Usuario no autenticado")
+		RespondError(w, http.StatusUnauthorized, "User not authenticated")
 		return
 	}
 
 	var user models.User
 	if err := h.DB.First(&user, "id = ?", userID).Error; err != nil {
-		RespondError(w, http.StatusNotFound, "Usuario no encontrado")
+		RespondError(w, http.StatusNotFound, "User not found")
 		return
 	}
 

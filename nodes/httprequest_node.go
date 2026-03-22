@@ -19,10 +19,10 @@ type HttpParams struct {
 	Headers            map[string]string      `json:"headers"`
 	Body               map[string]interface{} `json:"body"`
 	Timeout            int                    `json:"timeout"`
-	MaxRetries         int                    `json:"maxRetries"`         // Número máximo de reintentos (0 = sin retry)
-	RetryDelay         int                    `json:"retryDelay"`         // Delay inicial en ms entre reintentos
-	BackoffMultiplier  float64                `json:"backoffMultiplier"`  // Multiplicador para backoff exponencial
-	RetryOnStatusCodes []int                  `json:"retryOnStatusCodes"` // Códigos de estado que disparan retry
+	MaxRetries         int                    `json:"maxRetries"`         // Maximum number of retries (0 = no retry)
+	RetryDelay         int                    `json:"retryDelay"`         // Initial delay in ms between retries
+	BackoffMultiplier  float64                `json:"backoffMultiplier"`  // Multiplier for exponential backoff
+	RetryOnStatusCodes []int                  `json:"retryOnStatusCodes"` // Status codes that trigger retry
 }
 
 func (n *HttpRequestNode) Execute(
@@ -45,20 +45,20 @@ func (n *HttpRequestNode) Execute(
 		params.Timeout = 30000
 	}
 
-	// Defaults para retry
+	// Defaults for retry
 	if params.MaxRetries < 0 {
 		params.MaxRetries = 0
 	}
 	if params.MaxRetries > 10 {
-		params.MaxRetries = 10 // Límite de seguridad
+		params.MaxRetries = 10 // Safety limit
 	}
 	if params.RetryDelay <= 0 {
-		params.RetryDelay = 1000 // 1 segundo por defecto
+		params.RetryDelay = 1000 // 1 second by default
 	}
 	if params.BackoffMultiplier <= 0 {
-		params.BackoffMultiplier = 2.0 // Backoff exponencial por defecto
+		params.BackoffMultiplier = 2.0 // Exponential backoff by default
 	}
-	// Si no se especifican códigos, retry en errores de servidor y timeout
+	// If no codes specified, retry on server errors and timeout
 	if len(params.RetryOnStatusCodes) == 0 {
 		params.RetryOnStatusCodes = []int{408, 429, 500, 502, 503, 504}
 	}
@@ -74,7 +74,7 @@ func (n *HttpRequestNode) Execute(
 		Timeout: time.Duration(params.Timeout) * time.Millisecond,
 	}
 
-	// Ejecutar request con retry logic
+	// Execute request with retry logic
 	var lastErr error
 	var resp *http.Response
 	var respBody []byte
@@ -84,14 +84,14 @@ func (n *HttpRequestNode) Execute(
 	totalRetryTime := int64(0)
 
 	for attempts = 0; attempts <= params.MaxRetries; attempts++ {
-		// Si no es el primer intento, aplicar delay
+		// If this is not the first attempt, apply delay
 		if attempts > 0 {
 			time.Sleep(time.Duration(currentDelay) * time.Millisecond)
 			totalRetryTime += int64(currentDelay)
 			currentDelay = int(float64(currentDelay) * params.BackoffMultiplier)
 		}
 
-		// Recrear bodyReader para cada intento
+		// Recreate bodyReader for each attempt
 		var requestBody io.Reader
 		if params.Body != nil && len(params.Body) > 0 {
 			interpolatedBody := interpolateMap(params.Body, prev)
@@ -120,14 +120,14 @@ func (n *HttpRequestNode) Execute(
 
 		if err != nil {
 			lastErr = fmt.Errorf("request failed: %v", err)
-			// Si hay error de red, reintentar
+			// If there's a network error, retry
 			if attempts < params.MaxRetries {
 				continue
 			}
 			break
 		}
 
-		// Leer response body
+		// Read response body
 		respBody, err = io.ReadAll(resp.Body)
 		resp.Body.Close()
 
@@ -139,7 +139,7 @@ func (n *HttpRequestNode) Execute(
 			break
 		}
 
-		// Verificar si el status code requiere retry
+		// Check if the status code requires retry
 		shouldRetry := false
 		for _, code := range params.RetryOnStatusCodes {
 			if resp.StatusCode == code {
@@ -148,7 +148,7 @@ func (n *HttpRequestNode) Execute(
 			}
 		}
 
-		// Si no necesita retry o ya no hay más intentos, salir
+		// If no retry needed or no more attempts left, exit
 		if !shouldRetry || attempts >= params.MaxRetries {
 			break
 		}
@@ -156,7 +156,7 @@ func (n *HttpRequestNode) Execute(
 		lastErr = fmt.Errorf("status code %d requires retry", resp.StatusCode)
 	}
 
-	// Si todos los intentos fallaron
+	// If all attempts failed
 	if lastErr != nil && (resp == nil || resp.StatusCode >= 400) {
 		return nil, lastErr
 	}
@@ -184,7 +184,7 @@ func (n *HttpRequestNode) Execute(
 		"success":    resp.StatusCode >= 200 && resp.StatusCode < 300,
 	}
 
-	// Agregar información de retry si hubo reintentos
+	// Add retry information if there were retries
 	if params.MaxRetries > 0 {
 		result["attempts"] = attempts + 1
 		result["retried"] = attempts > 0

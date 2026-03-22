@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"bytes"
+	"capyflow/api/config"
 	"capyflow/api/models"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 type TelegramNode struct{}
 
 type TelegramParams struct {
-	BotToken  string `json:"botToken"`
 	ChatID    string `json:"chatId"`
 	Message   string `json:"message"`
 	ParseMode string `json:"parseMode"` // Optional: "Markdown", "HTML", or empty
@@ -21,7 +21,7 @@ type TelegramParams struct {
 type TelegramResponse struct {
 	OK     bool `json:"ok"`
 	Result struct {
-		MessageID int    `json:"message_id"`
+		MessageID int `json:"message_id"`
 		Chat      struct {
 			ID int64 `json:"id"`
 		} `json:"chat"`
@@ -36,13 +36,25 @@ func (n *TelegramNode) Execute(node *models.Node, prev map[string]map[string]int
 		return nil, fmt.Errorf("error parsing telegram params: %v", err)
 	}
 
-	// Validate required parameters
-	if params.BotToken == "" {
-		return nil, fmt.Errorf("botToken is required")
+	// Interpolate dynamic values from previous node outputs
+	params.ChatID = interpolateString(params.ChatID, prev)
+	params.Message = interpolateString(params.Message, prev)
+
+	// Load global Telegram config
+	cfg := config.LoadConfig()
+	botToken := cfg.Telegram.BotToken
+	if botToken == "" {
+		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN is not configured")
 	}
 
-	if params.ChatID == "" {
-		return nil, fmt.Errorf("chatId is required")
+	// If chatId is empty, try to use default from config
+	chatID := params.ChatID
+	if chatID == "" {
+		chatID = cfg.Telegram.DefaultChatID
+	}
+
+	if chatID == "" {
+		return nil, fmt.Errorf("chatId is required (no default configured)")
 	}
 
 	if params.Message == "" {
@@ -50,11 +62,11 @@ func (n *TelegramNode) Execute(node *models.Node, prev map[string]map[string]int
 	}
 
 	// Build Telegram API URL
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", params.BotToken)
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	// Prepare request body
 	requestBody := map[string]interface{}{
-		"chat_id": params.ChatID,
+		"chat_id": chatID,
 		"text":    params.Message,
 	}
 
@@ -88,7 +100,7 @@ func (n *TelegramNode) Execute(node *models.Node, prev map[string]map[string]int
 
 	output := map[string]interface{}{
 		"sent":    telegramResp.OK,
-		"chatId":  params.ChatID,
+		"chatId":  chatID,
 		"message": params.Message,
 	}
 

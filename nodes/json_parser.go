@@ -12,15 +12,33 @@ func (n *JsonParserNode) Execute(
 	node *models.Node,
 	prev map[string]map[string]interface{},
 ) (map[string]interface{}, error) {
+	var params map[string]interface{}
+	if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
+		return nil, fmt.Errorf("json-parser: invalid parameters")
+	}
 
 	var raw interface{}
 	found := false
 
-	for _, output := range prev {
-		if v, ok := output["json"]; ok {
-			raw = v
+	if jsonParam, ok := params["json"].(string); ok && jsonParam != "" {
+		raw = interpolateString(jsonParam, prev)
+		found = true
+	}
+
+	if !found {
+		if jsonParam, ok := params["jsonString"].(string); ok && jsonParam != "" {
+			raw = interpolateString(jsonParam, prev)
 			found = true
-			break
+		}
+	}
+
+	if !found {
+		for _, output := range prev {
+			if v, ok := output["json"]; ok {
+				raw = v
+				found = true
+				break
+			}
 		}
 	}
 

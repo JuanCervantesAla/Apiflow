@@ -9,11 +9,11 @@ import (
 )
 
 func MigrateNodeCategories(db *gorm.DB) error {
-	log.Println("Iniciando migración de categorías de nodos...")
+	log.Println("Starting node categories migration...")
 
 	var nodes []models.Node
 	if err := db.Where("category IS NULL OR category = ''").Find(&nodes).Error; err != nil {
-		log.Printf("Error al obtener nodos: %v", err)
+		log.Printf("Error getting nodes: %v", err)
 		return err
 	}
 
@@ -31,15 +31,15 @@ func MigrateNodeCategories(db *gorm.DB) error {
 		subtitleLower := strings.ToLower(node.Subtitle)
 		if category, exists := subtitleToCategoryMap[subtitleLower]; exists {
 			if err := db.Model(&node).Update("category", category).Error; err != nil {
-				log.Printf("Error actualizando nodo %s: %v", node.ID, err)
+				log.Printf("Error updating node %s: %v", node.ID, err)
 				continue
 			}
-			log.Printf("  ✓ Nodo %s (%s): subtitle '%s' → category '%s'",
+			log.Printf("  ✓ Node %s (%s): subtitle '%s' → category '%s'",
 				node.ID, node.Label, node.Subtitle, category)
 			updated++
 		}
 	}
 
-	log.Printf("Migración completada: %d nodos actualizados", updated)
+	log.Printf("Migration completed: %d nodes updated", updated)
 	return nil
 }

@@ -33,8 +33,18 @@ func (n *FunctionNode) Execute(
 		return nil, fmt.Errorf("code parameter is required")
 	}
 
-	// Get input data
+	// Get input data. If not explicitly provided, try to infer
+	// it from previous node outputs (common case: use "data"
+	// array from a CSV Parser or similar node).
 	inputData := params.InputData
+	if inputData == nil {
+		for _, out := range prev {
+			if candidate, ok := out["data"]; ok {
+				inputData = candidate
+				break
+			}
+		}
+	}
 
 	// Create JavaScript VM
 	vm := goja.New()
@@ -73,10 +83,10 @@ func (n *FunctionNode) Execute(
 		},
 	})
 
-	// Wrap code in function if not already wrapped
-	if !strings.Contains(code, "return") {
-		code = fmt.Sprintf("(function() { %s })()", code)
-	}
+	// Always wrap user code in an IIFE so that
+	// "return" statements are valid and execute
+	// without causing a top-level return syntax error.
+	code = fmt.Sprintf("(function() { %s })()", code)
 
 	// Execute the code
 	value, err := vm.RunString(code)

@@ -49,7 +49,7 @@ func (es *ExecutorService) execute(
 		result.Status = "error"
 		result.ErrorMessage = err.Error()
 
-		// Enviar error detallado por WebSocket
+		// Send detailed error via WebSocket
 		if es.Hub != nil {
 			es.Hub.BroadcastToUser(userID, websocket.ExecutionUpdate{
 				Type:        "execution-error",
@@ -58,7 +58,7 @@ func (es *ExecutorService) execute(
 				Status:      "error",
 				Message:     err.Error(),
 				Data: map[string]string{
-					"details": "Revisa las conexiones del flujo. Los triggers deben estar al inicio y conectar hacia otros nodos (no recibir conexiones).",
+					"details": "Check the flow connections. Triggers must be at the beginning and connect to other nodes (not receive connections).",
 				},
 				Timestamp: time.Now().Format(time.RFC3339),
 			})
@@ -132,7 +132,7 @@ func (es *ExecutorService) execute(
 
 	result.DurationMs = time.Since(start).Milliseconds()
 
-	// Enviar mensaje de finalización
+	// Send completion message
 	if es.Hub != nil && userID != "" {
 		updateType := "complete"
 		message := "Execution completed successfully"

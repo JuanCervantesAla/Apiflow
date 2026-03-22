@@ -10,18 +10,18 @@ import (
 type LoopNode struct{}
 
 type LoopParams struct {
-	ArraySource   string `json:"arraySource"`   // Path al array en el contexto: "body.users"
+	ArraySource   string `json:"arraySource"`   // Path to the array in context: "body.users"
 	Operation     string `json:"operation"`     // "map", "filter", "forEach"
-	MapExpression string `json:"mapExpression"` // Para map: expresión a aplicar "{{item.name}}"
-	FilterExpr    string `json:"filterExpr"`    // Para filter: condición "{{item.age}} > 18"
-	ItemVariable  string `json:"itemVariable"`  // Nombre de la variable para cada item (default: "item")
-	IndexVariable string `json:"indexVariable"` // Nombre de la variable para el índice (default: "index")
+	MapExpression string `json:"mapExpression"` // For map: expression to apply "{{item.name}}"
+	FilterExpr    string `json:"filterExpr"`    // For filter: condition "{{item.age}} > 18"
+	ItemVariable  string `json:"itemVariable"`  // Variable name for each item (default: "item")
+	IndexVariable string `json:"indexVariable"` // Variable name for the index (default: "index")
 }
 
 func (n *LoopNode) Execute(node *models.Node, context map[string]map[string]interface{}) (map[string]interface{}, error) {
 	var params LoopParams
 	if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
-		return nil, fmt.Errorf("error al decodificar parámetros: %v", err)
+		return nil, fmt.Errorf("error decoding parameters: %v", err)
 	}
 
 	// Defaults
@@ -43,7 +43,7 @@ func (n *LoopNode) Execute(node *models.Node, context map[string]map[string]inte
 		}
 	}
 
-	// Obtener el array del contexto
+	// Get the array from context
 	arrayValue := getNestedValue(prev, params.ArraySource)
 	fmt.Printf("[DEBUG] Loop Node - arraySource: %s, arrayValue: %T, %v\n", params.ArraySource, arrayValue, arrayValue)
 
@@ -55,11 +55,11 @@ func (n *LoopNode) Execute(node *models.Node, context map[string]map[string]inte
 		}, nil
 	}
 
-	// Convertir a slice
+	// Convert to slice
 	arraySlice, ok := arrayValue.([]interface{})
 	if !ok {
 		fmt.Printf("[DEBUG] Loop Node - arrayValue is not []interface{}, type: %T\n", arrayValue)
-		return nil, fmt.Errorf("'%s' no es un array válido", params.ArraySource)
+		return nil, fmt.Errorf("'%s' is not a valid array", params.ArraySource)
 	}
 
 	fmt.Printf("[DEBUG] Loop Node - arraySlice length: %d, operation: %s\n", len(arraySlice), params.Operation)
@@ -72,45 +72,45 @@ func (n *LoopNode) Execute(node *models.Node, context map[string]map[string]inte
 	case "forEach":
 		return n.executeForEach(arraySlice, params)
 	default:
-		return nil, fmt.Errorf("operación no soportada: %s", params.Operation)
+		return nil, fmt.Errorf("operation not supported: %s", params.Operation)
 	}
 }
 
-// executeMap aplica una transformación a cada item
+// executeMap applies a transformation to each item
 func (n *LoopNode) executeMap(array []interface{}, params LoopParams, context map[string]map[string]interface{}) (map[string]interface{}, error) {
 	if params.MapExpression == "" {
-		return nil, fmt.Errorf("mapExpression es requerido para la operación 'map'")
+		return nil, fmt.Errorf("mapExpression is required for 'map' operation")
 	}
 
 	results := make([]interface{}, len(array))
 
 	for i, item := range array {
-		// Crear contexto temporal para este item
-		// Aplanar el contexto: copiar todas las variables existentes
+		// Create temporary context for this item
+		// Flatten the context: copy all existing variables
 		itemContext := make(map[string]map[string]interface{})
 		for k, v := range context {
 			itemContext[k] = v
 		}
 
-		// Agregar variables del loop en un nodo temporal "loop"
-		// Esto permite acceder a {{item.name}} o {{index}}
+		// Add loop variables in a temporary "loop" node
+		// This allows accessing {{item.name}} or {{index}}
 		loopVars := map[string]interface{}{
 			params.IndexVariable: i,
 		}
 
-		// Si el item es un mapa, agregar sus campos directamente con el prefijo item
+		// If the item is a map, add its fields directly with the item prefix
 		if itemMap, ok := item.(map[string]interface{}); ok {
 			for k, v := range itemMap {
 				loopVars[params.ItemVariable+"."+k] = v
 			}
-			loopVars[params.ItemVariable] = item // También mantener el item completo
+			loopVars[params.ItemVariable] = item // Also keep the complete item
 		} else {
 			loopVars[params.ItemVariable] = item
 		}
 
 		itemContext["loop"] = loopVars
 
-		// Interpolar la expresión
+		// Interpolate the expression
 		result := interpolateString(params.MapExpression, itemContext)
 		results[i] = result
 		if i < 3 {
@@ -125,27 +125,27 @@ func (n *LoopNode) executeMap(array []interface{}, params LoopParams, context ma
 	}, nil
 }
 
-// executeFilter filtra items que cumplen una condición
+// executeFilter filters items that meet a condition
 func (n *LoopNode) executeFilter(array []interface{}, params LoopParams, context map[string]map[string]interface{}) (map[string]interface{}, error) {
 	if params.FilterExpr == "" {
-		return nil, fmt.Errorf("filterExpr es requerido para la operación 'filter'")
+		return nil, fmt.Errorf("filterExpr is required for 'filter' operation")
 	}
 
 	results := []interface{}{}
 
 	for i, item := range array {
-		// Crear contexto temporal para este item
+		// Create temporary context for this item
 		itemContext := make(map[string]map[string]interface{})
 		for k, v := range context {
 			itemContext[k] = v
 		}
 
-		// Agregar variables del loop
+		// Add loop variables
 		loopVars := map[string]interface{}{
 			params.IndexVariable: i,
 		}
 
-		// Si el item es un mapa, agregar sus campos con el prefijo item
+		// If the item is a map, add its fields with the item prefix
 		if itemMap, ok := item.(map[string]interface{}); ok {
 			for k, v := range itemMap {
 				loopVars[params.ItemVariable+"."+k] = v
@@ -157,9 +157,9 @@ func (n *LoopNode) executeFilter(array []interface{}, params LoopParams, context
 
 		itemContext["loop"] = loopVars
 
-		// Evaluar condición
+		// Evaluate condition
 		condition := interpolateString(params.FilterExpr, itemContext)
-		// Si la condición evaluada es "true" o contiene el item, incluirlo
+		// If the evaluated condition is "true" or contains the item, include it
 		if condition == "true" || strings.Contains(strings.ToLower(condition), "true") {
 			results = append(results, item)
 		}
@@ -171,10 +171,10 @@ func (n *LoopNode) executeFilter(array []interface{}, params LoopParams, context
 	}, nil
 }
 
-// executeForEach simplemente pasa los items al siguiente nodo
-// Útil para combinar con otros nodos que procesen arrays
+// executeForEach simply passes the items to the next node
+// Useful for combining with other nodes that process arrays
 func (n *LoopNode) executeForEach(array []interface{}, params LoopParams) (map[string]interface{}, error) {
-	// Crear array de items con metadata
+	// Create array of items with metadata
 	items := make([]interface{}, len(array))
 	for i, item := range array {
 		items[i] = map[string]interface{}{

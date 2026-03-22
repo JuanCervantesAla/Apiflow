@@ -8,27 +8,27 @@ import (
 type WebhookTriggerNode struct{}
 
 type WebhookParams struct {
-	// El webhook no necesita parámetros, solo procesa el payload recibido
-	ValidationEnabled bool   `json:"validationEnabled"` // Opcional: validar signature
-	Secret            string `json:"secret"`            // Opcional: secret para validación
+	// The webhook doesn't need parameters, it just processes the received payload
+	ValidationEnabled bool   `json:"validationEnabled"` // Optional: validate signature
+	Secret            string `json:"secret"`            // Optional: secret for validation
 }
 
 func (n *WebhookTriggerNode) Execute(node *models.Node, context map[string]map[string]interface{}) (map[string]interface{}, error) {
 	var params WebhookParams
 	if err := json.Unmarshal([]byte(node.Parameters), &params); err != nil {
-		// Si no hay parámetros, usar defaults
+		// If there are no parameters, use defaults
 		params.ValidationEnabled = false
 	}
 
-	// El webhook ya recibió los datos y los pasó en el contexto
-	// Solo retornar el payload que viene en el contexto inicial
+	// The webhook already received the data and passed it in the context
+	// Just return the payload that comes in the initial context
 
-	// Buscar el payload del webhook en el contexto
+	// Look for the webhook payload in the context
 	if webhookData, exists := context["webhook"]; exists {
 		return webhookData, nil
 	}
 
-	// Si no hay datos del webhook, retornar estructura básica
+	// If there is no webhook data, return basic structure
 	return map[string]interface{}{
 		"triggered": true,
 		"source":    "webhook",
