@@ -26,7 +26,7 @@ type CronService struct {
 func NewCronService(db *gorm.DB, hub *websocket.Hub) *CronService {
 	return &CronService{
 		db:       db,
-		executor: NewExecutorService(hub),
+		executor: NewExecutorService(db, hub),
 		lastRun:  make(map[string]time.Time),
 		stopCh:   make(chan struct{}),
 	}

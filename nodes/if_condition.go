@@ -67,9 +67,9 @@ func (n *IfConditionNode) Execute(
 }
 
 func resolveConditionField(field string, prev map[string]map[string]interface{}) (interface{}, bool) {
-	ref := field
+	ref := strings.TrimSpace(field)
 	if len(ref) >= 4 && ref[:2] == "{{" && ref[len(ref)-2:] == "}}" {
-		ref = ref[2 : len(ref)-2]
+		ref = strings.TrimSpace(ref[2 : len(ref)-2])
 	}
 
 	// node-X.output.some.path
@@ -83,11 +83,37 @@ func resolveConditionField(field string, prev map[string]map[string]interface{})
 
 	// Fallback: search key in previous outputs
 	for _, output := range prev {
+		if val, ok := output[ref]; ok {
+			return val, true
+		}
 		if val, ok := output[field]; ok {
+			return val, true
+		}
+		if val := getNestedValue(output, ref); val != nil {
 			return val, true
 		}
 		if val := getNestedValue(output, field); val != nil {
 			return val, true
+		}
+
+		// Common HTTP node shape: { body: { ... }, statusCode, success, ... }
+		// If users ask for "completed", try "body.completed" automatically.
+		if bodyRaw, hasBody := output["body"]; hasBody {
+			if bodyMap, ok := bodyRaw.(map[string]interface{}); ok {
+				if val, ok := bodyMap[ref]; ok {
+					return val, true
+				}
+				if val, ok := bodyMap[field]; ok {
+					return val, true
+				}
+			}
+
+			if val := getNestedValue(output, "body."+ref); val != nil {
+				return val, true
+			}
+			if val := getNestedValue(output, "body."+field); val != nil {
+				return val, true
+			}
 		}
 	}
 

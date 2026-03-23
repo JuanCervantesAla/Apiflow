@@ -18,7 +18,10 @@ func InitDB(dsn string) (*gorm.DB, error) {
 
 	err = db.AutoMigrate(
 		&models.User{},
+		&models.Connection{},
 		&models.Flow{},
+		&models.FlowVersion{},
+		&models.FlowShare{},
 		&models.Node{},
 		&models.Edge{},
 		&models.NodeType{},

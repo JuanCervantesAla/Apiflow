@@ -3,6 +3,7 @@ package rules
 import (
 	"capyflow/api/models"
 	"errors"
+	"strings"
 )
 
 const (
@@ -51,10 +52,14 @@ var AllowedNodeTypes = map[string]bool{
 	"log":          true,
 	"database":     true,
 	// AI
-	"groq": true,
+	"groq":            true,
+	"ai-configurator": true,
 	// Integration
-	"email":    true,
-	"telegram": true,
+	"email":           true,
+	"telegram":        true,
+	"document-ingest": true,
+	"ocr-extract":     true,
+	"finance-extract": true,
 	// Custom
 	"custom": true,
 }
@@ -70,6 +75,7 @@ func ValidateFlow(flow *models.Flow) error {
 
 	triggerCount := 0
 	nodeMap := map[string]*models.Node{}
+	outgoing := map[string][]models.Edge{}
 
 	for i := range flow.Nodes {
 		node := &flow.Nodes[i]
@@ -90,6 +96,8 @@ func ValidateFlow(flow *models.Flow) error {
 	}
 
 	for _, edge := range flow.Edges {
+		outgoing[edge.Source] = append(outgoing[edge.Source], edge)
+
 		source, ok1 := nodeMap[edge.Source]
 		target, ok2 := nodeMap[edge.Target]
 
@@ -121,6 +129,36 @@ func ValidateFlow(flow *models.Flow) error {
 			println("  Target Node:", target.Label, "Type:", target.Type, "Category:", target.Category)
 			println("  Allowed categories from source:", allowed)
 			return errors.New("connection not allowed between nodes")
+		}
+	}
+
+	for _, node := range flow.Nodes {
+		if node.Type != "if-condition" {
+			continue
+		}
+
+		edges := outgoing[node.ID]
+		if len(edges) == 0 {
+			return errors.New("if-condition node must have true/false branches connected")
+		}
+
+		hasTrue := false
+		hasFalse := false
+		for _, e := range edges {
+			branch := strings.ToLower(strings.TrimSpace(e.SourceHandle))
+			if branch == "" {
+				branch = strings.ToLower(strings.TrimSpace(e.Label))
+			}
+			switch branch {
+			case "true":
+				hasTrue = true
+			case "false":
+				hasFalse = true
+			}
+		}
+
+		if !hasTrue || !hasFalse {
+			return errors.New("if-condition node requires both true and false outgoing branches")
 		}
 	}
 
