@@ -4,9 +4,11 @@ import (
 	"capyflow/api/models"
 	"capyflow/api/services"
 	"capyflow/api/websocket"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,24 +46,12 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the webhook body
-	bodyBytes, err := io.ReadAll(r.Body)
+	payload, err := buildWebhookPayload(r)
 	if err != nil {
-		RespondJSON(w, http.StatusBadRequest, map[string]string{"error": "Failed to read request body"})
+		RespondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	defer r.Body.Close()
 
-	var payload map[string]interface{}
-	if len(bodyBytes) > 0 {
-		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			payload = map[string]interface{}{
-				"body": string(bodyBytes),
-			}
-		}
-	} else {
-		payload = map[string]interface{}{}
-	}
 	payload["method"] = r.Method
 	payload["headers"] = extractHeadersFromRequest(r)
 	payload["query"] = r.URL.Query()
@@ -92,7 +82,7 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Execute in background
 	go func() {
-		executorService := services.NewExecutorService(h.Hub)
+		executorService := services.NewExecutorService(h.DB, h.Hub)
 		executorService.ExecuteFlowWithContext(&flow, initialContext, userID, executionID)
 	}()
 
@@ -126,6 +116,73 @@ func extractHeadersFromRequest(r *http.Request) map[string]string {
 	}
 
 	return headers
+}
+
+func buildWebhookPayload(r *http.Request) (map[string]interface{}, error) {
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+
+	if strings.Contains(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			return nil, err
+		}
+
+		payload := map[string]interface{}{}
+		for key, values := range r.MultipartForm.Value {
+			if len(values) == 1 {
+				payload[key] = values[0]
+			} else {
+				payload[key] = values
+			}
+		}
+
+		for fieldName, files := range r.MultipartForm.File {
+			if len(files) == 0 {
+				continue
+			}
+
+			fileHeader := files[0]
+			f, err := fileHeader.Open()
+			if err != nil {
+				return nil, err
+			}
+			fileBytes, readErr := io.ReadAll(f)
+			_ = f.Close()
+			if readErr != nil {
+				return nil, readErr
+			}
+
+			mimeType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+			if mimeType == "" {
+				mimeType = http.DetectContentType(fileBytes)
+			}
+
+			payload["fileField"] = fieldName
+			payload["fileName"] = fileHeader.Filename
+			payload["mimeType"] = mimeType
+			payload["fileSize"] = len(fileBytes)
+			payload["fileContentBase64"] = base64.StdEncoding.EncodeToString(fileBytes)
+			break
+		}
+
+		return payload, nil
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+
+	payload := map[string]interface{}{}
+	if len(bodyBytes) == 0 {
+		return payload, nil
+	}
+
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		payload["body"] = string(bodyBytes)
+	}
+
+	return payload, nil
 }
 
 // GetWebhookURL returns the webhook URL for a flow

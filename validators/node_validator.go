@@ -1,4 +1,4 @@
-﻿package validators
+package validators
 
 import (
 	"capyflow/api/models"
@@ -194,11 +194,166 @@ var NodeSchemas = map[string]NodeSchema{
 			},
 		},
 	},
+	"ai-configurator": {
+		Type:     "ai-configurator",
+		Required: []string{"goal", "targetNodeType"},
+		Parameters: map[string]ParameterSchema{
+			"goal": {
+				Type:        "string",
+				Required:    true,
+				Description: "What you want to achieve in plain language",
+				Example:     "Configure an HTTP node to send invoice data to my accounting API",
+				Advanced:    false,
+			},
+			"targetNodeType": {
+				Type:        "string",
+				Required:    true,
+				Description: "Node type to configure (for example: http-request, email, database)",
+				Advanced:    false,
+			},
+			"inputContext": {
+				Type:        "string",
+				Required:    false,
+				Description: "Extra context, payload shape, or constraints",
+				Advanced:    false,
+			},
+			"model": {
+				Type:        "string",
+				Required:    false,
+				Default:     "llama-3.3-70b-versatile",
+				Description: "LLM model for suggestion generation",
+				Advanced:    true,
+			},
+			"temperature": {
+				Type:        "number",
+				Required:    false,
+				Default:     0.2,
+				Min:         floatPtr(0.0),
+				Max:         floatPtr(2.0),
+				Description: "Creativity level for suggestions",
+				Advanced:    true,
+			},
+			"maxTokens": {
+				Type:        "number",
+				Required:    false,
+				Default:     900,
+				Min:         floatPtr(128),
+				Max:         floatPtr(4096),
+				Description: "Maximum response length",
+				Advanced:    true,
+			},
+		},
+	},
+	"document-ingest": {
+		Type:     "document-ingest",
+		Required: []string{},
+		Parameters: map[string]ParameterSchema{
+			"inputData": {
+				Type:        "string",
+				Required:    false,
+				Description: "Raw file content (text) or interpolated upstream content",
+				Advanced:    false,
+			},
+			"fileContentBase64": {
+				Type:        "string",
+				Required:    false,
+				Description: "Base64 file content for binary files (images, xlsx, pdf)",
+				Advanced:    false,
+			},
+			"fileName": {
+				Type:        "string",
+				Required:    false,
+				Description: "Original file name with extension",
+				Example:     "receipt_2026-03-22.jpg",
+				Advanced:    false,
+			},
+			"mimeType": {
+				Type:        "string",
+				Required:    false,
+				Description: "Optional MIME type hint",
+				Example:     "image/jpeg",
+				Advanced:    true,
+			},
+			"maxChars": {
+				Type:        "number",
+				Required:    false,
+				Default:     20000,
+				Description: "Maximum extracted text length",
+				Min:         floatPtr(100),
+				Max:         floatPtr(200000),
+				Advanced:    true,
+			},
+		},
+	},
+	"ocr-extract": {
+		Type:     "ocr-extract",
+		Required: []string{},
+		Parameters: map[string]ParameterSchema{
+			"fileUrl": {
+				Type:        "string",
+				Required:    false,
+				Description: "Public file URL to process via OCR",
+				Advanced:    false,
+			},
+			"fileContentBase64": {
+				Type:        "string",
+				Required:    false,
+				Description: "Base64 image or PDF payload",
+				Advanced:    false,
+			},
+			"mimeType": {
+				Type:        "string",
+				Required:    false,
+				Description: "MIME type for base64 payload",
+				Advanced:    true,
+			},
+			"language": {
+				Type:        "string",
+				Required:    false,
+				Default:     "eng",
+				Description: "OCR language code",
+				Advanced:    true,
+			},
+			"engine": {
+				Type:        "string",
+				Required:    false,
+				Default:     "ocrspace",
+				Enum:        []interface{}{"ocrspace"},
+				Description: "OCR engine provider",
+				Advanced:    true,
+			},
+		},
+	},
+	"finance-extract": {
+		Type:     "finance-extract",
+		Required: []string{"text"},
+		Parameters: map[string]ParameterSchema{
+			"text": {
+				Type:        "string",
+				Required:    true,
+				Description: "Receipt or finance text to parse",
+				Advanced:    false,
+			},
+			"defaultCurrency": {
+				Type:        "string",
+				Required:    false,
+				Default:     "USD",
+				Description: "Fallback currency if not detected in text",
+				Advanced:    true,
+			},
+		},
+	},
 	// Email
 	"email": {
 		Type:     "email",
 		Required: []string{"to", "subject"},
 		Parameters: map[string]ParameterSchema{
+			"connectionId": {
+				Type:        "string",
+				Required:    false,
+				Description: "Reusable connection ID (provider credentials)",
+				Advanced:    true,
+			},
 			"to": {
 				Type:        "string",
 				Required:    true,
@@ -233,6 +388,12 @@ var NodeSchemas = map[string]NodeSchema{
 		Type:     "telegram",
 		Required: []string{"message"},
 		Parameters: map[string]ParameterSchema{
+			"connectionId": {
+				Type:        "string",
+				Required:    false,
+				Description: "Reusable connection ID (provider credentials)",
+				Advanced:    true,
+			},
 			"message": {
 				Type:        "string",
 				Required:    true,
@@ -801,10 +962,41 @@ func parseNodeParameters(node *models.Node) (map[string]interface{}, error) {
 		return params, nil
 	}
 
+	// Legacy compatibility: some old flows store parameters as arrays like
+	// [{"id":"intervalMinutes","value":60}] instead of a JSON object.
+	var paramArray []map[string]interface{}
+	if err := json.Unmarshal([]byte(node.Parameters), &paramArray); err == nil {
+		normalized := make(map[string]interface{})
+		for _, item := range paramArray {
+			id, _ := item["id"].(string)
+			if id == "" {
+				continue
+			}
+			if val, ok := item["value"]; ok {
+				normalized[id] = val
+				continue
+			}
+			if def, ok := item["default"]; ok {
+				normalized[id] = def
+			}
+		}
+
+		updatedJSON, err := json.Marshal(normalized)
+		if err == nil {
+			node.Parameters = string(updatedJSON)
+		}
+		return normalized, nil
+	}
+
 	// Backward compatibility: older flows may have stored raw CSV/text directly
 	// in trigger parameters. Normalize to a JSON object so validation can continue.
-	if node.Type == "manual-trigger" || node.Type == "telegram-trigger" {
+	if node.Type == "manual-trigger" || node.Type == "telegram-trigger" || node.Type == "webhook-trigger" {
 		params = map[string]interface{}{"csvContent": node.Parameters}
+		if node.Type == "webhook-trigger" {
+			// Webhook trigger does not require parameters; keep it as an empty object
+			// when old flows contain non-JSON data.
+			params = map[string]interface{}{}
+		}
 		updatedJSON, err := json.Marshal(params)
 		if err == nil {
 			node.Parameters = string(updatedJSON)
@@ -861,6 +1053,28 @@ func ValidateNode(node *models.Node) error {
 				params["value"] = legacy
 			}
 		}
+
+		// Be tolerant with AI-generated value types: convert to string
+		// to satisfy schema while preserving semantic meaning.
+		if rawField, ok := params["field"]; ok {
+			if _, isString := rawField.(string); !isString {
+				params["field"] = fmt.Sprint(rawField)
+			}
+		}
+		if rawOperator, ok := params["operator"]; ok {
+			if _, isString := rawOperator.(string); !isString {
+				params["operator"] = fmt.Sprint(rawOperator)
+			}
+		}
+		if rawValue, ok := params["value"]; ok {
+			switch rawValue.(type) {
+			case string:
+				// keep as-is
+			default:
+				params["value"] = fmt.Sprint(rawValue)
+			}
+		}
+
 		if updated, err := json.Marshal(params); err == nil {
 			node.Parameters = string(updated)
 		}

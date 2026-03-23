@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -30,6 +32,18 @@ type AIRepairFlowRequest struct {
 	APIKey    string                 `json:"apiKey,omitempty"`
 	FlowID    string                 `json:"flowId,omitempty"`
 	SessionID string                 `json:"sessionId,omitempty"`
+}
+
+type AIFixFlowRequest struct {
+	Flow                 map[string]interface{} `json:"flow" binding:"required"`
+	Goal                 string                 `json:"goal"`
+	Issues               string                 `json:"issues"`
+	AdjustParametersOnly bool                   `json:"adjustParametersOnly"`
+	StrictMode           *bool                  `json:"strictMode,omitempty"`
+	MaxAttempts          int                    `json:"maxAttempts,omitempty"`
+	APIKey               string                 `json:"apiKey,omitempty"`
+	FlowID               string                 `json:"flowId,omitempty"`
+	SessionID            string                 `json:"sessionId,omitempty"`
 }
 
 // Groq API structures (OpenAI-compatible)
@@ -259,6 +273,15 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 	// Apply validations and defaults to the generated nodes
 	flow.Nodes = normalizeAINodes(flow.Nodes)
 	flow.Edges = normalizeAIEdges(flow.Edges)
+	flow.Nodes = stabilizeAIFlowReferences(flow.Nodes, flow.Edges)
+	if issues := findUnresolvedNodeReferences(flow.Nodes); len(issues) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(AIGenerateFlowResponse{
+			Success: false,
+			Error:   "Coherence error: unresolved node references after normalization: " + strings.Join(issues, "; "),
+		})
+		return
+	}
 
 	processedNodes, err := processAINodes(flow.Nodes)
 	if err != nil {
@@ -301,6 +324,7 @@ PARAMETER CONTRACTS (must match runtime):
 - http-request: url (string), method (GET|POST|PUT|DELETE|PATCH), optional headers/body
 - log: optional label, optional message
 - groq: prompt (string), optional model, temperature, maxTokens
+- ai-configurator: goal (string), targetNodeType (string), optional inputContext, model, temperature, maxTokens
 - if-condition: field (string), operator (==|!=|>|<|>=|<=|contains), value (string/number/bool)
 - loop: arraySource (string), optional operation (forEach|map|filter), mapExpression, filterExpr
 - transform-data: transformations (array of {source,target,operation,value})
@@ -315,6 +339,7 @@ PARAMETER CONTRACTS (must match runtime):
 INTERPOLATION:
 - Use {{node-ID.output.field}} when referencing previous node output.
 - Prefer explicit node references over ambiguous placeholders.
+- References MUST use existing node IDs present in the same flow. Never invent aliases like node-1/node-2 unless those IDs actually exist.
 
 JSON SHAPE:
 {
@@ -628,6 +653,19 @@ Respond ONLY with valid JSON.`, string(flowJSON), req.Issues)
 	}
 
 	// Apply validations and defaults to the repaired nodes
+	repairedFlow.Nodes = normalizeAINodes(repairedFlow.Nodes)
+	repairedFlow.Edges = normalizeAIEdges(repairedFlow.Edges)
+	repairedFlow.Nodes = stabilizeAIFlowReferences(repairedFlow.Nodes, repairedFlow.Edges)
+	if issues := findUnresolvedNodeReferences(repairedFlow.Nodes); len(issues) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Coherence error: unresolved node references after normalization: " + strings.Join(issues, "; "),
+			"fixes":   repairedFlow.Fixes,
+		})
+		return
+	}
+
 	processedNodes, err := processAINodes(repairedFlow.Nodes)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -655,6 +693,336 @@ Respond ONLY with valid JSON.`, string(flowJSON), req.Issues)
 		"fixes":       repairedFlow.Fixes,
 		"rawResponse": content,
 	})
+}
+
+func (h *AIHandler) FixFlowWithAI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req AIFixFlowRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	apiKey, err := h.getAPIKey()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(AIGenerateFlowResponse{
+			Success: false,
+			Error:   "Groq API key not configured. Please set GROQ_API_KEY in your .env file",
+		})
+		return
+	}
+
+	if strings.TrimSpace(req.Goal) == "" {
+		req.Goal = "Optimize and complete node parameters so the flow is executable and easier to understand."
+	}
+
+	if !req.AdjustParametersOnly {
+		req.AdjustParametersOnly = true
+	}
+
+	strictMode := true
+	if req.StrictMode != nil {
+		strictMode = *req.StrictMode
+	}
+
+	maxAttempts := req.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	if maxAttempts > 3 {
+		maxAttempts = 3
+	}
+
+	flowJSON, _ := json.MarshalIndent(req.Flow, "", "  ")
+	flowContext := summarizeFlowContext(req.Flow)
+
+	basePrompt := fmt.Sprintf(`You are an expert CapyFlow optimization assistant.
+
+PRIMARY GOAL:
+%s
+
+USER-REPORTED ISSUES (optional):
+%s
+
+CURRENT FLOW (full context):
+%s
+
+FLOW SUMMARY:
+%s
+
+RULES:
+1. Return ONLY valid JSON.
+2. Preserve semantic behavior unless the goal explicitly requests behavior changes.
+3. Keep node ids and edge ids stable whenever possible.
+4. Keep node positions stable unless overlap is severe.
+5. Prioritize PARAMETER optimization and completion.
+6. Ensure all required parameters are configured with practical values.
+7. Prefer explicit interpolation references ({{node-id.output.field}}).
+8. Keep descriptions concise and useful for non-technical users.
+9. If unsure about credentials, leave placeholders only for secret values.
+10. Never use synthetic references like node-1/node-2 unless they are actual IDs in the flow.
+11. Keep set-data values runtime-compatible and deterministic.
+
+STRICT MODE:
+- strictMode = %v
+- adjustParametersOnly = %v
+- If true: do not add/remove nodes unless absolutely necessary for validity.
+
+RESPONSE FORMAT:
+{
+  "flowName": "...",
+  "flowDescription": "...",
+  "nodes": [...],
+  "edges": [...],
+  "fixes": ["what changed", "..."]
+}
+
+	Respond ONLY with JSON.`, req.Goal, req.Issues, string(flowJSON), flowContext, strictMode, req.AdjustParametersOnly)
+
+	type aiFixedFlow struct {
+		FlowName        string   `json:"flowName"`
+		FlowDescription string   `json:"flowDescription"`
+		Nodes           []any    `json:"nodes"`
+		Edges           []any    `json:"edges"`
+		Fixes           []string `json:"fixes"`
+	}
+
+	var (
+		lastErrMsg       string
+		lastHint         string
+		lastRawResponse  string
+		lastCleaned      string
+		lastTruncated    bool
+		lastFixes        []string
+		feedbackForRetry string
+	)
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		prompt := basePrompt
+		if strings.TrimSpace(feedbackForRetry) != "" {
+			prompt = prompt + "\n\nPREVIOUS ATTEMPT FEEDBACK:\n" + feedbackForRetry + "\n\nUse this feedback to correct only problematic parts."
+		}
+
+		groqReq := GroqRequest{
+			Model:       "llama-3.3-70b-versatile",
+			Temperature: 0.2,
+			MaxTokens:   8192,
+			Messages: []GroqMessage{
+				{Role: "system", Content: "You optimize CapyFlow workflows. Output ONLY valid JSON."},
+				{Role: "user", Content: prompt},
+			},
+		}
+
+		jsonData, err := json.Marshal(groqReq)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(AIGenerateFlowResponse{Success: false, Error: "Failed to prepare request"})
+			return
+		}
+
+		httpReq, err := http.NewRequest("POST", "https://api.groq.com/openai/v1/chat/completions", bytes.NewBuffer(jsonData))
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(AIGenerateFlowResponse{Success: false, Error: "Failed to create request"})
+			return
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+		client := &http.Client{}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(AIGenerateFlowResponse{Success: false, Error: "Failed to call Groq API"})
+			return
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(AIGenerateFlowResponse{Success: false, Error: "Failed to read response"})
+			return
+		}
+
+		var groqResp GroqResponse
+		if err := json.Unmarshal(body, &groqResp); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(AIGenerateFlowResponse{Success: false, Error: "Failed to parse response"})
+			return
+		}
+		if groqResp.Error != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(AIGenerateFlowResponse{Success: false, Error: "Groq API error: " + groqResp.Error.Message})
+			return
+		}
+		if len(groqResp.Choices) == 0 {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(AIGenerateFlowResponse{Success: false, Error: "No response from Groq API"})
+			return
+		}
+
+		content := groqResp.Choices[0].Message.Content
+		cleanedContent := content
+		if strings.Contains(content, "```json") {
+			start := strings.Index(content, "```json") + 7
+			end := strings.LastIndex(content, "```")
+			if start > 7 && end > start {
+				cleanedContent = strings.TrimSpace(content[start:end])
+			}
+		} else if strings.Contains(content, "```") {
+			start := strings.Index(content, "```") + 3
+			end := strings.LastIndex(content, "```")
+			if start > 3 && end > start {
+				cleanedContent = strings.TrimSpace(content[start:end])
+			}
+		}
+		if !strings.HasPrefix(strings.TrimSpace(cleanedContent), "{") {
+			firstBrace := strings.Index(cleanedContent, "{")
+			lastBrace := strings.LastIndex(cleanedContent, "}")
+			if firstBrace >= 0 && lastBrace > firstBrace {
+				cleanedContent = strings.TrimSpace(cleanedContent[firstBrace : lastBrace+1])
+			}
+		}
+
+		openBraces := strings.Count(cleanedContent, "{")
+		closeBraces := strings.Count(cleanedContent, "}")
+		isTruncated := openBraces != closeBraces || !strings.HasSuffix(strings.TrimSpace(cleanedContent), "}")
+
+		lastRawResponse = content
+		lastCleaned = cleanedContent
+		lastTruncated = isTruncated
+
+		var fixedFlow aiFixedFlow
+		if err := json.Unmarshal([]byte(cleanedContent), &fixedFlow); err != nil {
+			lastErrMsg = "Failed to parse fixed flow: " + err.Error()
+			if isTruncated {
+				lastHint = "AI response was truncated. Please try with a shorter goal."
+			} else {
+				lastHint = "AI returned invalid JSON."
+			}
+			feedbackForRetry = lastErrMsg
+			continue
+		}
+
+		lastFixes = fixedFlow.Fixes
+		if len(fixedFlow.Nodes) == 0 {
+			lastErrMsg = "Fixed flow contains no nodes"
+			lastHint = "AI removed all nodes. Keep original structure and only adjust parameters."
+			feedbackForRetry = lastErrMsg
+			continue
+		}
+
+		fixedFlow.Nodes = normalizeAINodes(fixedFlow.Nodes)
+		fixedFlow.Edges = normalizeAIEdges(fixedFlow.Edges)
+		fixedFlow.Nodes = stabilizeAIFlowReferences(fixedFlow.Nodes, fixedFlow.Edges)
+
+		coherence := buildFlowCoherenceReport(fixedFlow.Nodes)
+		if strictMode && len(coherence["issues"].([]string)) > 0 {
+			issues := coherence["issues"].([]string)
+			lastErrMsg = "Coherence validation failed"
+			lastHint = "AI produced inconsistent node references or runtime-incompatible values."
+			feedbackForRetry = "Coherence issues: " + strings.Join(issues, " | ")
+			continue
+		}
+
+		processedNodes, err := processAINodes(fixedFlow.Nodes)
+		if err != nil {
+			lastErrMsg = "Validation error: " + err.Error()
+			lastHint = "Parameters are still incompatible with runtime contracts."
+			feedbackForRetry = lastErrMsg
+			continue
+		}
+		fixedFlow.Nodes = processedNodes
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"flow": map[string]interface{}{
+				"flowName":        fixedFlow.FlowName,
+				"flowDescription": fixedFlow.FlowDescription,
+				"nodes":           fixedFlow.Nodes,
+				"edges":           fixedFlow.Edges,
+			},
+			"fixes":       fixedFlow.Fixes,
+			"rawResponse": content,
+			"strictMode":  strictMode,
+			"attempts":    attempt,
+			"coherence":   coherence,
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     false,
+		"error":       lastErrMsg,
+		"hint":        lastHint,
+		"fixes":       lastFixes,
+		"rawResponse": lastRawResponse,
+		"cleaned":     lastCleaned,
+		"truncated":   lastTruncated,
+		"strictMode":  strictMode,
+		"attempts":    maxAttempts,
+	})
+	return
+}
+
+func summarizeFlowContext(flow map[string]interface{}) string {
+	nodesAny, _ := flow["nodes"].([]interface{})
+	edgesAny, _ := flow["edges"].([]interface{})
+
+	typeCounts := map[string]int{}
+	missingParams := []string{}
+
+	for _, item := range nodesAny {
+		node, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		nodeID, _ := node["id"].(string)
+		nodeType, _ := node["type"].(string)
+		data, _ := node["data"].(map[string]interface{})
+		if data != nil {
+			if dt, ok := data["type"].(string); ok && strings.TrimSpace(dt) != "" {
+				nodeType = dt
+			}
+		}
+		typeCounts[nodeType]++
+
+		var params map[string]interface{}
+		if data != nil {
+			params, _ = data["parameters"].(map[string]interface{})
+		}
+		if params == nil {
+			params, _ = node["parameters"].(map[string]interface{})
+		}
+
+		if params == nil || len(params) == 0 {
+			missingParams = append(missingParams, fmt.Sprintf("%s(%s)", nodeID, nodeType))
+		}
+	}
+
+	parts := []string{
+		fmt.Sprintf("nodes=%d", len(nodesAny)),
+		fmt.Sprintf("edges=%d", len(edgesAny)),
+		fmt.Sprintf("typeCounts=%v", typeCounts),
+	}
+
+	if len(missingParams) > 0 {
+		limit := len(missingParams)
+		if limit > 15 {
+			limit = 15
+		}
+		parts = append(parts, "nodesWithMissingParams="+strings.Join(missingParams[:limit], ", "))
+	}
+
+	return strings.Join(parts, " | ")
 }
 
 func min(a, b int) int {
@@ -739,6 +1107,289 @@ func normalizeAIEdges(edges []any) []any {
 		result = append(result, edge)
 	}
 	return result
+}
+
+func stabilizeAIFlowReferences(nodes []any, edges []any) []any {
+	_ = edges // Reserved for future graph-aware remapping.
+	if len(nodes) == 0 {
+		return nodes
+	}
+
+	aliasMap := buildLegacyAliasMap(nodes)
+	if len(aliasMap) == 0 {
+		return nodes
+	}
+
+	for _, item := range nodes {
+		nodeMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		nodeType, _ := nodeMap["type"].(string)
+		data, _ := nodeMap["data"].(map[string]interface{})
+		if data != nil {
+			if dt, ok := data["type"].(string); ok && strings.TrimSpace(dt) != "" {
+				nodeType = dt
+			}
+		}
+
+		var params map[string]interface{}
+		if data != nil {
+			params, _ = data["parameters"].(map[string]interface{})
+		}
+		if params == nil {
+			params, _ = nodeMap["parameters"].(map[string]interface{})
+		}
+		if params == nil {
+			continue
+		}
+
+		replaced := replaceLegacyAliases(params, aliasMap)
+		if replacedMap, ok := replaced.(map[string]interface{}); ok {
+			params = replacedMap
+		}
+
+		if nodeType == "if-condition" {
+			normalizeIfConditionFromExpression(params)
+		}
+
+		if data != nil {
+			data["parameters"] = params
+			nodeMap["data"] = data
+		} else {
+			nodeMap["parameters"] = params
+		}
+	}
+
+	return nodes
+}
+
+func buildLegacyAliasMap(nodes []any) map[string]string {
+	type nodePoint struct {
+		id string
+		x  float64
+		y  float64
+	}
+
+	points := make([]nodePoint, 0, len(nodes))
+	for i, item := range nodes {
+		nodeMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := nodeMap["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			id = fmt.Sprintf("node-%d", i+1)
+		}
+		x, y := readNodePosition(nodeMap)
+		points = append(points, nodePoint{id: id, x: x, y: y})
+	}
+
+	sort.Slice(points, func(i, j int) bool {
+		if points[i].x == points[j].x {
+			return points[i].y < points[j].y
+		}
+		return points[i].x < points[j].x
+	})
+
+	aliasMap := map[string]string{}
+	for i, p := range points {
+		alias := fmt.Sprintf("node-%d", i+1)
+		if strings.TrimSpace(alias) == strings.TrimSpace(p.id) {
+			continue
+		}
+		aliasMap[alias] = p.id
+	}
+	return aliasMap
+}
+
+func readNodePosition(nodeMap map[string]interface{}) (float64, float64) {
+	position := nodeMap["position"]
+	if posMap, ok := position.(map[string]interface{}); ok {
+		return toFloat(posMap["x"]), toFloat(posMap["y"])
+	}
+	if posStr, ok := position.(string); ok && strings.TrimSpace(posStr) != "" {
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(posStr), &parsed); err == nil {
+			return toFloat(parsed["x"]), toFloat(parsed["y"])
+		}
+	}
+	return 0, 0
+}
+
+func toFloat(v interface{}) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case float32:
+		return float64(x)
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	default:
+		return 0
+	}
+}
+
+func replaceLegacyAliases(value interface{}, aliasMap map[string]string) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		updated := make(map[string]interface{}, len(v))
+		for k, nested := range v {
+			updated[k] = replaceLegacyAliases(nested, aliasMap)
+		}
+		return updated
+	case []interface{}:
+		updated := make([]interface{}, len(v))
+		for i, nested := range v {
+			updated[i] = replaceLegacyAliases(nested, aliasMap)
+		}
+		return updated
+	case string:
+		result := v
+		for alias, realID := range aliasMap {
+			result = strings.ReplaceAll(result, "{{"+alias+".", "{{"+realID+".")
+			result = strings.ReplaceAll(result, "{{"+alias+"}}", "{{"+realID+"}}")
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func normalizeIfConditionFromExpression(params map[string]interface{}) {
+	condition, _ := params["condition"].(string)
+	condition = strings.TrimSpace(condition)
+	if condition == "" {
+		return
+	}
+
+	// Example: {{node-uuid.output.priority}} == 'P1'
+	re := regexp.MustCompile(`^\s*\{\{([^}]+)\}\}\s*(==|!=|>=|<=|>|<|contains)\s*['"]?(.+?)['"]?\s*$`)
+	match := re.FindStringSubmatch(condition)
+	if len(match) != 4 {
+		return
+	}
+
+	leftRef := strings.TrimSpace(match[1])
+	op := strings.TrimSpace(match[2])
+	rightVal := strings.TrimSpace(match[3])
+
+	if leftRef != "" {
+		params["field"] = extractOutputFieldFromRef("{{" + leftRef + "}}")
+	}
+	if op != "" {
+		params["operator"] = op
+	}
+	if rightVal != "" {
+		params["value"] = rightVal
+	}
+}
+
+func findUnresolvedNodeReferences(nodes []any) []string {
+	idSet := map[string]bool{}
+	for _, item := range nodes {
+		nodeMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := nodeMap["id"].(string)
+		if strings.TrimSpace(id) != "" {
+			idSet[id] = true
+		}
+	}
+
+	placeholderRe := regexp.MustCompile(`\{\{([^}]+)\}\}`)
+	issues := []string{}
+	seen := map[string]bool{}
+
+	var walk func(interface{})
+	walk = func(v interface{}) {
+		switch t := v.(type) {
+		case map[string]interface{}:
+			for _, nested := range t {
+				walk(nested)
+			}
+		case []interface{}:
+			for _, nested := range t {
+				walk(nested)
+			}
+		case string:
+			matches := placeholderRe.FindAllStringSubmatch(t, -1)
+			for _, m := range matches {
+				if len(m) < 2 {
+					continue
+				}
+				root := strings.TrimSpace(strings.Split(m[1], ".")[0])
+				if root == "" {
+					continue
+				}
+				if idSet[root] {
+					continue
+				}
+				// Validate only explicit node-like references.
+				if strings.HasPrefix(root, "node-") || looksLikeUUID(root) {
+					if !seen[root] {
+						issues = append(issues, root)
+						seen[root] = true
+					}
+				}
+			}
+		}
+	}
+
+	for _, item := range nodes {
+		nodeMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		data, _ := nodeMap["data"].(map[string]interface{})
+		if data != nil {
+			if params, ok := data["parameters"]; ok {
+				walk(params)
+			}
+		}
+		if params, ok := nodeMap["parameters"]; ok {
+			walk(params)
+		}
+	}
+
+	return issues
+}
+
+func buildFlowCoherenceReport(nodes []any) map[string]interface{} {
+	issues := []string{}
+
+	unresolvedRefs := findUnresolvedNodeReferences(nodes)
+	for _, ref := range unresolvedRefs {
+		issues = append(issues, fmt.Sprintf("Unresolved node reference: %s", ref))
+	}
+
+	return map[string]interface{}{
+		"valid":  len(issues) == 0,
+		"issues": issues,
+	}
+}
+
+func looksLikeUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func normalizeNodeParameters(nodeType string, params map[string]interface{}) {
@@ -853,6 +1504,20 @@ func normalizeNodeParameters(nodeType string, params map[string]interface{}) {
 				params["defaultCase"] = def
 			}
 		}
+
+	case "ai-configurator":
+		if _, ok := params["goal"]; !ok {
+			params["goal"] = "Configure the target node with practical values for my workflow."
+		}
+		if _, ok := params["targetNodeType"]; !ok {
+			params["targetNodeType"] = "http-request"
+		}
+		if _, ok := params["temperature"]; !ok {
+			params["temperature"] = 0.2
+		}
+		if _, ok := params["maxTokens"]; !ok {
+			params["maxTokens"] = 900
+		}
 	}
 }
 
@@ -927,6 +1592,8 @@ func defaultNodeLabel(nodeType string) string {
 		return "JSON Parser"
 	case "groq":
 		return "Groq AI"
+	case "ai-configurator":
+		return "AI Configurator"
 	case "log":
 		return "Log"
 	case "delay":
@@ -956,6 +1623,8 @@ func defaultNodeDescription(nodeType string, params map[string]interface{}) stri
 		return fmt.Sprintf("Calls %s %s and outputs response status, headers, and body.", method, url)
 	case "groq":
 		return "Sends a prompt to Groq AI and outputs generated text and token usage metadata."
+	case "ai-configurator":
+		return "Generates node parameter suggestions from a natural-language goal to reduce manual setup."
 	case "if-condition":
 		field, _ := params["field"].(string)
 		operator, _ := params["operator"].(string)
@@ -1023,6 +1692,8 @@ func getNodeMetadata(nodeType string) (subtitle, icon, color, category string) {
 	// AI
 	case "groq":
 		return "AI", "IconBolt", "#F55036", "ai"
+	case "ai-configurator":
+		return "AI", "IconBrain", "#0EA5E9", "ai"
 
 	// Control
 	case "delay":

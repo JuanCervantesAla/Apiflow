@@ -4,7 +4,6 @@ import (
 	"capyflow/api/models"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 type LogNode struct{}
@@ -31,12 +30,7 @@ func (n *LogNode) Execute(
 	}
 
 	message := params.Message
-	for _, output := range prev {
-		for key, val := range output {
-			placeholder := fmt.Sprintf("{{%s}}", key)
-			message = strings.ReplaceAll(message, placeholder, fmt.Sprint(val))
-		}
-	}
+	message = interpolateString(message, prev)
 
 	fmt.Printf(
 		"[LOG][%s] %s\n",

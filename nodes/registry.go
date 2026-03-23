@@ -27,4 +27,8 @@ var Registry = map[string]NodeHandler{
 	"email":            &EmailNode{},
 	"telegram":         &TelegramNode{},
 	"database":         &DatabaseNode{},
+	"ai-configurator":  &AIConfiguratorNode{},
+	"document-ingest":  &DocumentIngestNode{},
+	"ocr-extract":      &OCRExtractNode{},
+	"finance-extract":  &FinanceExtractNode{},
 }

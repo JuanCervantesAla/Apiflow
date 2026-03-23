@@ -22,7 +22,7 @@ type ExecutionHandler struct {
 func NewExecutionHandler(db *gorm.DB, hub *websocket.Hub) *ExecutionHandler {
 	return &ExecutionHandler{
 		DB:              db,
-		ExecutorService: services.NewExecutorService(hub),
+		ExecutorService: services.NewExecutorService(db, hub),
 	}
 }
 

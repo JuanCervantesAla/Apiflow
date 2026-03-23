@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -25,10 +26,25 @@ func toFloat(v interface{}) (float64, bool) {
 func interpolateString(str string, prev map[string]map[string]interface{}) string {
 	result := str
 
+	// Keep interpolation deterministic across executions.
+	nodeIDs := make([]string, 0, len(prev))
+	for nodeID := range prev {
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	sort.Strings(nodeIDs)
+
 	// First, support explicit node references like {{node-1.output.field}}
-	for nodeID, output := range prev {
+	for _, nodeID := range nodeIDs {
+		output := prev[nodeID]
+		keys := make([]string, 0, len(output))
+		for key := range output {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
 		// Replace {{nodeID.output.field}}
-		for key, val := range output {
+		for _, key := range keys {
+			val := output[key]
 			placeholder := fmt.Sprintf("{{%s.output.%s}}", nodeID, key)
 			if strings.Contains(result, placeholder) {
 				result = strings.ReplaceAll(result, placeholder, fmt.Sprint(val))
@@ -43,13 +59,32 @@ func interpolateString(str string, prev map[string]map[string]interface{}) strin
 	}
 
 	// Backwards compatibility: simple placeholders like {{field}} that match any
-	// key in any previous node output
-	for _, output := range prev {
-		for key, val := range output {
-			placeholder := fmt.Sprintf("{{%s}}", key)
-			if strings.Contains(result, placeholder) {
-				result = strings.ReplaceAll(result, placeholder, fmt.Sprint(val))
+	// key in any previous node output. We only replace them when the key is
+	// unique to avoid non-deterministic collisions (e.g. multiple "response").
+	type keyMatch struct {
+		val   interface{}
+		count int
+	}
+	keyMatches := map[string]keyMatch{}
+	for _, nodeID := range nodeIDs {
+		for key, val := range prev[nodeID] {
+			current := keyMatches[key]
+			if current.count == 0 {
+				keyMatches[key] = keyMatch{val: val, count: 1}
+			} else {
+				current.count++
+				keyMatches[key] = current
 			}
+		}
+	}
+
+	for key, match := range keyMatches {
+		if match.count != 1 {
+			continue
+		}
+		placeholder := fmt.Sprintf("{{%s}}", key)
+		if strings.Contains(result, placeholder) {
+			result = strings.ReplaceAll(result, placeholder, fmt.Sprint(match.val))
 		}
 	}
 

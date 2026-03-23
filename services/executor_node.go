@@ -39,7 +39,7 @@ func (es *ExecutorService) executeNode(
 		})
 	}
 
-	output, err := es.processNode(node, nodeOutputs)
+	output, err := es.processNode(node, nodeOutputs, result.UserID, result.ExecutedNodes)
 	if err != nil {
 		exec.Status = models.StatusError
 		exec.Error = err.Error()
@@ -145,9 +145,20 @@ func (es *ExecutorService) executeNode(
 			}
 		}
 
-		exec.Status = models.StatusError
-		exec.Error = "No valid branch found for IF node"
-		result.Status = "partial"
+		// Tolerant fallback: if only one edge exists, continue through it.
+		if len(edges) == 1 {
+			es.executeNode(
+				edges[0].Target,
+				nodeMap,
+				edgeMap,
+				nodeOutputs,
+				visited,
+				result,
+			)
+			return
+		}
+
+		// If branch is not connected, end this path without failing the whole execution.
 		return
 	}
 

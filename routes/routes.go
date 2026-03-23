@@ -25,6 +25,7 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	execHandler := handlers.NewExecutionHandler(db, hub)
 	userHandler := handlers.NewUserHandler(db)
 	nodeTypeHandler := handlers.NewNodeTypeHandler(db)
+	connectionHandler := handlers.NewConnectionHandler(db)
 	webhookHandler := handlers.NewWebhookHandler(db, hub)
 	wsHandler := handlers.NewWebSocketHandler(hub)
 	wsTicketHandler := handlers.NewWSTicketHandler()
@@ -54,6 +55,7 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	// AI Generation
 	protected.HandleFunc("/ai/generate-flow", aiHandler.GenerateFlowWithAI).Methods("POST", "OPTIONS")
 	protected.HandleFunc("/ai/repair-flow", aiHandler.RepairFlowWithAI).Methods("POST", "OPTIONS")
+	protected.HandleFunc("/ai/fix-flow", aiHandler.FixFlowWithAI).Methods("POST", "OPTIONS")
 
 	// Flows
 	protected.HandleFunc("/flows", flowHandler.GetAllFlows).Methods("GET")
@@ -62,6 +64,14 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	protected.HandleFunc("/flows/{id}", flowHandler.UpdateFlow).Methods("PUT")
 	protected.HandleFunc("/flows/{id}", flowHandler.DeleteFlow).Methods("DELETE")
 	protected.HandleFunc("/flows/{id}/save", flowHandler.SaveFlowData).Methods("POST")
+	protected.HandleFunc("/flows/{id}/clone", flowHandler.CloneFlow).Methods("POST")
+	protected.HandleFunc("/flows/{id}/export", flowHandler.ExportFlow).Methods("GET")
+	protected.HandleFunc("/flows/import", flowHandler.ImportFlow).Methods("POST")
+	protected.HandleFunc("/flows/{id}/versions", flowHandler.GetFlowVersions).Methods("GET")
+	protected.HandleFunc("/flows/{id}/rollback", flowHandler.RollbackFlow).Methods("POST")
+	protected.HandleFunc("/flows/{id}/share", flowHandler.CreateOrGetFlowShare).Methods("POST")
+	protected.HandleFunc("/flows/{id}/share", flowHandler.UpdateFlowShare).Methods("PUT")
+	protected.HandleFunc("/flows/{id}/share/regenerate", flowHandler.RegenerateFlowShare).Methods("POST")
 	protected.HandleFunc("/flows/{id}/execute", execHandler.ExecuteFlow).Methods("POST")
 
 	// Executions
@@ -74,6 +84,13 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 	protected.HandleFunc("/node-types/category", nodeTypeHandler.GetNodeTypesByCategory).Methods("GET")
 	protected.HandleFunc("/node-schemas", nodeTypeHandler.GetNodeSchemas).Methods("GET")
 	protected.HandleFunc("/node-schemas/{type}", nodeTypeHandler.GetNodeSchema).Methods("GET")
+
+	// Connections (reusable credentials)
+	protected.HandleFunc("/connections", connectionHandler.GetAllConnections).Methods("GET")
+	protected.HandleFunc("/connections", connectionHandler.CreateConnection).Methods("POST")
+	protected.HandleFunc("/connections/{id}", connectionHandler.GetConnection).Methods("GET")
+	protected.HandleFunc("/connections/{id}", connectionHandler.UpdateConnection).Methods("PUT")
+	protected.HandleFunc("/connections/{id}", connectionHandler.DeleteConnection).Methods("DELETE")
 
 	// Analytics
 	protected.HandleFunc("/analytics/summary", analyticsHandler.GetAnalyticsSummary).Methods("GET", "OPTIONS")
@@ -94,6 +111,7 @@ func SetupRoutes(db *gorm.DB, hub *websocket.Hub) *mux.Router {
 
 	// Public webhooks (to receive external webhooks)
 	api.HandleFunc("/webhooks/{id}", webhookHandler.HandleWebhook).Methods("POST", "GET", "OPTIONS")
+	api.HandleFunc("/public/flows/{shareId}", flowHandler.GetPublicSharedFlow).Methods("GET")
 
 	// WebSocket Ticket
 	protected.HandleFunc("/ws/ticket", wsTicketHandler.GenerateTicket).Methods("POST", "OPTIONS")

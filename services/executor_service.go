@@ -5,15 +5,19 @@ import (
 	"capyflow/api/rules"
 	"capyflow/api/websocket"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type ExecutorService struct {
 	Hub *websocket.Hub
+	DB  *gorm.DB
 }
 
-func NewExecutorService(hub *websocket.Hub) *ExecutorService {
+func NewExecutorService(db *gorm.DB, hub *websocket.Hub) *ExecutorService {
 	return &ExecutorService{
 		Hub: hub,
+		DB:  db,
 	}
 }
 
