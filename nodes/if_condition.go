@@ -4,6 +4,7 @@ import (
 	"capyflow/api/models"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -79,6 +80,12 @@ func resolveConditionField(field string, prev map[string]map[string]interface{})
 		if output, ok := prev[nodeID]; ok {
 			return getNestedValue(output, joinPath(parts[2:])), true
 		}
+
+		// Legacy AI fallback: when node alias does not exist (for example node-6),
+		// resolve by requested output path against already available upstream outputs.
+		if val, ok := resolveByPathAcrossOutputs(prev, joinPath(parts[2:])); ok {
+			return val, true
+		}
 	}
 
 	// Fallback: search key in previous outputs
@@ -113,6 +120,46 @@ func resolveConditionField(field string, prev map[string]map[string]interface{})
 			}
 			if val := getNestedValue(output, "body."+field); val != nil {
 				return val, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func resolveByPathAcrossOutputs(prev map[string]map[string]interface{}, path string) (interface{}, bool) {
+	trimmedPath := strings.TrimSpace(path)
+	if trimmedPath == "" || len(prev) == 0 {
+		return nil, false
+	}
+
+	targetPaths := []string{trimmedPath}
+	if strings.HasPrefix(trimmedPath, "body.") {
+		targetPaths = append(targetPaths, strings.TrimPrefix(trimmedPath, "body."))
+	} else {
+		targetPaths = append(targetPaths, "body."+trimmedPath)
+	}
+
+	// Also try the leaf key as last resort (e.g. severity from x.y.severity).
+	if idx := strings.LastIndex(trimmedPath, "."); idx >= 0 && idx < len(trimmedPath)-1 {
+		targetPaths = append(targetPaths, trimmedPath[idx+1:])
+	}
+
+	// Deterministic iteration for reproducibility.
+	nodeIDs := make([]string, 0, len(prev))
+	for nodeID := range prev {
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	sort.Strings(nodeIDs)
+
+	for _, nodeID := range nodeIDs {
+		output := prev[nodeID]
+		for _, p := range targetPaths {
+			if val := getNestedValue(output, p); val != nil {
+				return val, true
+			}
+			if raw, ok := output[p]; ok {
+				return raw, true
 			}
 		}
 	}

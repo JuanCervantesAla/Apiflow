@@ -273,6 +273,7 @@ func (h *AIHandler) GenerateFlowWithAI(w http.ResponseWriter, r *http.Request) {
 	// Apply validations and defaults to the generated nodes
 	flow.Nodes = normalizeAINodes(flow.Nodes)
 	flow.Edges = normalizeAIEdges(flow.Edges)
+	flow.Nodes, flow.Edges = ensureIfConditionBranches(flow.Nodes, flow.Edges)
 	flow.Nodes = stabilizeAIFlowReferences(flow.Nodes, flow.Edges)
 	if issues := findUnresolvedNodeReferences(flow.Nodes); len(issues) > 0 {
 		w.WriteHeader(http.StatusBadRequest)
@@ -655,6 +656,7 @@ Respond ONLY with valid JSON.`, string(flowJSON), req.Issues)
 	// Apply validations and defaults to the repaired nodes
 	repairedFlow.Nodes = normalizeAINodes(repairedFlow.Nodes)
 	repairedFlow.Edges = normalizeAIEdges(repairedFlow.Edges)
+	repairedFlow.Nodes, repairedFlow.Edges = ensureIfConditionBranches(repairedFlow.Nodes, repairedFlow.Edges)
 	repairedFlow.Nodes = stabilizeAIFlowReferences(repairedFlow.Nodes, repairedFlow.Edges)
 	if issues := findUnresolvedNodeReferences(repairedFlow.Nodes); len(issues) > 0 {
 		w.WriteHeader(http.StatusBadRequest)
@@ -919,6 +921,7 @@ RESPONSE FORMAT:
 
 		fixedFlow.Nodes = normalizeAINodes(fixedFlow.Nodes)
 		fixedFlow.Edges = normalizeAIEdges(fixedFlow.Edges)
+		fixedFlow.Nodes, fixedFlow.Edges = ensureIfConditionBranches(fixedFlow.Nodes, fixedFlow.Edges)
 		fixedFlow.Nodes = stabilizeAIFlowReferences(fixedFlow.Nodes, fixedFlow.Edges)
 
 		coherence := buildFlowCoherenceReport(fixedFlow.Nodes)
@@ -1163,6 +1166,175 @@ func stabilizeAIFlowReferences(nodes []any, edges []any) []any {
 	}
 
 	return nodes
+}
+
+func ensureIfConditionBranches(nodes []any, edges []any) ([]any, []any) {
+	if len(nodes) == 0 {
+		return nodes, edges
+	}
+
+	nodeByID := map[string]map[string]interface{}{}
+	nodeIDExists := map[string]bool{}
+	ifNodeIDs := []string{}
+
+	for _, item := range nodes {
+		nodeMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		nodeID, _ := nodeMap["id"].(string)
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID == "" {
+			continue
+		}
+
+		nodeByID[nodeID] = nodeMap
+		nodeIDExists[nodeID] = true
+
+		nodeType, _ := nodeMap["type"].(string)
+		if data, ok := nodeMap["data"].(map[string]interface{}); ok {
+			if dt, ok := data["type"].(string); ok && strings.TrimSpace(dt) != "" {
+				nodeType = dt
+			}
+		}
+
+		if strings.TrimSpace(nodeType) == "if-condition" {
+			ifNodeIDs = append(ifNodeIDs, nodeID)
+		}
+	}
+
+	if len(ifNodeIDs) == 0 {
+		return nodes, edges
+	}
+
+	outgoingIdx := map[string][]int{}
+	for i, edgeAny := range edges {
+		edgeMap, ok := edgeAny.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		source, _ := edgeMap["source"].(string)
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		if _, isIf := nodeByID[source]; isIf {
+			outgoingIdx[source] = append(outgoingIdx[source], i)
+		}
+	}
+
+	for _, ifNodeID := range ifNodeIDs {
+		edgeIndexes := outgoingIdx[ifNodeID]
+		hasTrue := false
+		hasFalse := false
+		unassigned := make([]int, 0, len(edgeIndexes))
+
+		for _, idx := range edgeIndexes {
+			edgeMap, ok := edges[idx].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			branch := readBranchFromEdge(edgeMap)
+			switch branch {
+			case "true":
+				hasTrue = true
+			case "false":
+				hasFalse = true
+			default:
+				unassigned = append(unassigned, idx)
+			}
+		}
+
+		for _, idx := range unassigned {
+			edgeMap, ok := edges[idx].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if !hasTrue {
+				edgeMap["sourceHandle"] = "true"
+				edgeMap["label"] = "true"
+				hasTrue = true
+				continue
+			}
+			if !hasFalse {
+				edgeMap["sourceHandle"] = "false"
+				edgeMap["label"] = "false"
+				hasFalse = true
+				continue
+			}
+		}
+
+		for _, missingBranch := range []string{"true", "false"} {
+			if (missingBranch == "true" && hasTrue) || (missingBranch == "false" && hasFalse) {
+				continue
+			}
+
+			ifNode := nodeByID[ifNodeID]
+			x, y := readNodePosition(ifNode)
+			offsetY := 120.0
+			if missingBranch == "false" {
+				offsetY = -120.0
+			}
+
+			stopID := fmt.Sprintf("%s-auto-stop-%s", ifNodeID, missingBranch)
+			if nodeIDExists[stopID] {
+				stopID = fmt.Sprintf("%s-auto-stop-%s-%d", ifNodeID, missingBranch, len(nodes)+1)
+			}
+			nodeIDExists[stopID] = true
+
+			stopNode := map[string]interface{}{
+				"id":       stopID,
+				"type":     "stop",
+				"label":    "Auto Stop " + strings.ToUpper(missingBranch),
+				"category": "control",
+				"position": map[string]interface{}{
+					"x": x + 280,
+					"y": y + offsetY,
+				},
+				"data": map[string]interface{}{
+					"type":        "stop",
+					"label":       "Auto Stop " + strings.ToUpper(missingBranch),
+					"category":    "control",
+					"description": "Auto-generated fallback branch for if-condition.",
+					"parameters": map[string]interface{}{
+						"reason": "Missing " + missingBranch + " branch was auto-fixed",
+					},
+				},
+			}
+
+			edgeID := fmt.Sprintf("edge-%s-auto-%s", ifNodeID, missingBranch)
+			autoEdge := map[string]interface{}{
+				"id":           edgeID,
+				"type":         "customEdge",
+				"source":       ifNodeID,
+				"target":       stopID,
+				"sourceHandle": missingBranch,
+				"label":        missingBranch,
+			}
+
+			nodes = append(nodes, stopNode)
+			edges = append(edges, autoEdge)
+
+			if missingBranch == "true" {
+				hasTrue = true
+			} else {
+				hasFalse = true
+			}
+		}
+	}
+
+	return nodes, edges
+}
+
+func readBranchFromEdge(edge map[string]interface{}) string {
+	if branch, _ := edge["sourceHandle"].(string); strings.TrimSpace(branch) != "" {
+		return strings.ToLower(strings.TrimSpace(branch))
+	}
+	if label, _ := edge["label"].(string); strings.TrimSpace(label) != "" {
+		return strings.ToLower(strings.TrimSpace(label))
+	}
+	return ""
 }
 
 func buildLegacyAliasMap(nodes []any) map[string]string {

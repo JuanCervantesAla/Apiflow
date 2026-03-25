@@ -30,7 +30,7 @@ func (n *FilterNode) Execute(
 	}
 
 	// Get input data
-	inputData := params.InputData
+	inputData := resolveFilterInputData(params.InputData, prev)
 	if inputData == nil {
 		return nil, fmt.Errorf("inputData parameter is required")
 	}
@@ -43,7 +43,7 @@ func (n *FilterNode) Execute(
 
 	// Get condition field
 	field := params.Field
-	
+
 	// Get operator
 	operator := params.Operator
 	if operator == "" {
@@ -55,7 +55,7 @@ func (n *FilterNode) Execute(
 
 	// Handle input data - could be array or object
 	var dataArray []interface{}
-	
+
 	switch v := inputData.(type) {
 	case []interface{}:
 		dataArray = v
@@ -79,7 +79,7 @@ func (n *FilterNode) Execute(
 	var filtered []interface{}
 	for _, item := range dataArray {
 		matches := evaluateFilterCondition(item, field, operator, compareValue)
-		
+
 		if (mode == "keep" && matches) || (mode == "remove" && !matches) {
 			filtered = append(filtered, item)
 		}
@@ -90,6 +90,35 @@ func (n *FilterNode) Execute(
 		"count":    len(filtered),
 		"original": len(dataArray),
 	}, nil
+}
+
+func resolveFilterInputData(raw interface{}, prev map[string]map[string]interface{}) interface{} {
+	text, ok := raw.(string)
+	if !ok {
+		return raw
+	}
+
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return raw
+	}
+
+	// Exact explicit placeholder: {{node-id.output.path}}
+	if matches := explicitNodePlaceholderRe.FindStringSubmatch(trimmed); len(matches) >= 3 && matches[0] == trimmed {
+		nodeID := matches[1]
+		path := matches[2]
+		if output, exists := prev[nodeID]; exists {
+			if path == "" {
+				return output
+			}
+			if value, found := resolveOutputPath(output, path); found {
+				return value
+			}
+		}
+	}
+
+	// Fallback: interpolate any mixed text placeholders.
+	return interpolateString(text, prev)
 }
 
 // evaluateFilterCondition checks if an item matches the filter condition
@@ -114,19 +143,19 @@ func evaluateFilterCondition(item interface{}, field, operator string, compareVa
 	switch operator {
 	case "equals":
 		return itemStr == compareStr
-	
+
 	case "notEquals":
 		return itemStr != compareStr
-	
+
 	case "contains":
 		return strings.Contains(strings.ToLower(itemStr), strings.ToLower(compareStr))
-	
+
 	case "startsWith":
 		return strings.HasPrefix(strings.ToLower(itemStr), strings.ToLower(compareStr))
-	
+
 	case "endsWith":
 		return strings.HasSuffix(strings.ToLower(itemStr), strings.ToLower(compareStr))
-	
+
 	case "greaterThan":
 		itemNum, err1 := strconv.ParseFloat(itemStr, 64)
 		compareNum, err2 := strconv.ParseFloat(compareStr, 64)
@@ -134,7 +163,7 @@ func evaluateFilterCondition(item interface{}, field, operator string, compareVa
 			return itemNum > compareNum
 		}
 		return false
-	
+
 	case "lessThan":
 		itemNum, err1 := strconv.ParseFloat(itemStr, 64)
 		compareNum, err2 := strconv.ParseFloat(compareStr, 64)
@@ -142,7 +171,7 @@ func evaluateFilterCondition(item interface{}, field, operator string, compareVa
 			return itemNum < compareNum
 		}
 		return false
-	
+
 	case "greaterOrEqual":
 		itemNum, err1 := strconv.ParseFloat(itemStr, 64)
 		compareNum, err2 := strconv.ParseFloat(compareStr, 64)
@@ -150,7 +179,7 @@ func evaluateFilterCondition(item interface{}, field, operator string, compareVa
 			return itemNum >= compareNum
 		}
 		return false
-	
+
 	case "lessOrEqual":
 		itemNum, err1 := strconv.ParseFloat(itemStr, 64)
 		compareNum, err2 := strconv.ParseFloat(compareStr, 64)
@@ -158,13 +187,13 @@ func evaluateFilterCondition(item interface{}, field, operator string, compareVa
 			return itemNum <= compareNum
 		}
 		return false
-	
+
 	case "isEmpty":
 		return itemStr == "" || itemStr == "null" || itemStr == "<nil>"
-	
+
 	case "isNotEmpty":
 		return itemStr != "" && itemStr != "null" && itemStr != "<nil>"
-	
+
 	default:
 		return false
 	}

@@ -228,108 +228,108 @@ func (h *FlowHandler) saveFlowSnapshot(
 	note string,
 	createVersion bool,
 ) error {
-	var flow models.Flow
-	if err := h.DB.First(&flow, "id = ? AND user_id = ?", flowID, userID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return fmt.Errorf("Flow not found")
-		}
-		return fmt.Errorf("Error loading flow")
-	}
-
-	now := time.Now()
-
-	if createVersion {
-		snapshot := FlowVersionSnapshot{Nodes: nodes, Edges: edges}
-		snapshotJSON, err := json.Marshal(snapshot)
-		if err != nil {
-			return fmt.Errorf("Error serializing snapshot")
+	return h.DB.Transaction(func(tx *gorm.DB) error {
+		var flow models.Flow
+		if err := tx.First(&flow, "id = ? AND user_id = ?", flowID, userID).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return fmt.Errorf("Flow not found")
+			}
+			return fmt.Errorf("Error loading flow")
 		}
 
-		var latest models.FlowVersion
-		nextVersion := 1
-		if err := h.DB.Where("flow_id = ?", flowID).Order("version_number DESC").First(&latest).Error; err == nil {
-			nextVersion = latest.VersionNumber + 1
+		now := time.Now()
+
+		if createVersion {
+			snapshot := FlowVersionSnapshot{Nodes: nodes, Edges: edges}
+			snapshotJSON, err := json.Marshal(snapshot)
+			if err != nil {
+				return fmt.Errorf("Error serializing snapshot")
+			}
+
+			var latest models.FlowVersion
+			nextVersion := 1
+			if err := tx.Where("flow_id = ?", flowID).Order("version_number DESC").First(&latest).Error; err == nil {
+				nextVersion = latest.VersionNumber + 1
+			}
+
+			version := models.FlowVersion{
+				ID:            uuid.New().String(),
+				FlowID:        flowID,
+				UserID:        userID,
+				VersionNumber: nextVersion,
+				Note:          note,
+				Snapshot:      string(snapshotJSON),
+				CreatedAt:     now,
+			}
+
+			if err := tx.Create(&version).Error; err != nil {
+				return fmt.Errorf("Error creating flow version")
+			}
 		}
 
-		version := models.FlowVersion{
-			ID:            uuid.New().String(),
-			FlowID:        flowID,
-			UserID:        userID,
-			VersionNumber: nextVersion,
-			Note:          note,
-			Snapshot:      string(snapshotJSON),
-			CreatedAt:     now,
+		if err := tx.Where("flow_id = ?", flowID).Delete(&models.Node{}).Error; err != nil {
+			return fmt.Errorf("Error deleting previous nodes")
+		}
+		if err := tx.Where("flow_id = ?", flowID).Delete(&models.Edge{}).Error; err != nil {
+			return fmt.Errorf("Error deleting previous edges")
 		}
 
-		if err := h.DB.Create(&version).Error; err != nil {
-			return fmt.Errorf("Error creating flow version")
-		}
-	}
+		// Create a map to translate node IDs (to maintain references in edges)
+		idMap := make(map[string]string)
 
-	h.DB.Where("flow_id = ?", flowID).Delete(&models.Node{})
-	h.DB.Where("flow_id = ?", flowID).Delete(&models.Edge{})
+		// Apply defaults and validate nodes before saving
+		for i := range nodes {
+			oldID := nodes[i].ID
+			newID := uuid.New().String()
+			idMap[oldID] = newID
+			nodes[i].ID = newID
 
-	// Create a map to translate node IDs (to maintain references in edges)
-	idMap := make(map[string]string)
+			nodes[i].FlowID = flowID
+			nodes[i].CreatedAt = now
+			nodes[i].UpdatedAt = now
 
-	// Apply defaults and validate nodes before saving
-	for i := range nodes {
-		// Generate a new unique UUID for each node
-		oldID := nodes[i].ID
-		newID := uuid.New().String()
-		idMap[oldID] = newID
-		nodes[i].ID = newID
+			if err := validators.ApplyDefaults(&nodes[i]); err != nil {
+				return fmt.Errorf("Error applying defaults to node %s: %v", nodes[i].Label, err)
+			}
 
-		nodes[i].FlowID = flowID
-		nodes[i].CreatedAt = now
-		nodes[i].UpdatedAt = now
-
-		// Apply automatic defaults
-		if err := validators.ApplyDefaults(&nodes[i]); err != nil {
-			return fmt.Errorf("Error applying defaults to node %s: %v", nodes[i].Label, err)
+			if err := validators.ValidateNode(&nodes[i]); err != nil {
+				return fmt.Errorf("Validation error: %v", err)
+			}
 		}
 
-		// Validate parameters
-		if err := validators.ValidateNode(&nodes[i]); err != nil {
-			return fmt.Errorf("Validation error: %v", err)
-		}
-	}
-	if len(nodes) > 0 {
-		if err := h.DB.Create(&nodes).Error; err != nil {
-			return fmt.Errorf("Error to save nodes")
-		}
-	}
-	for i := range edges {
-		// Update source and target references with new IDs
-		if newSource, ok := idMap[edges[i].Source]; ok {
-			edges[i].Source = newSource
-		}
-		if newTarget, ok := idMap[edges[i].Target]; ok {
-			edges[i].Target = newTarget
+		if len(nodes) > 0 {
+			if err := tx.Create(&nodes).Error; err != nil {
+				return fmt.Errorf("Error to save nodes")
+			}
 		}
 
-		// Generate a new unique UUID for each edge
-		edges[i].ID = uuid.New().String()
+		for i := range edges {
+			if newSource, ok := idMap[edges[i].Source]; ok {
+				edges[i].Source = newSource
+			}
+			if newTarget, ok := idMap[edges[i].Target]; ok {
+				edges[i].Target = newTarget
+			}
 
-		edges[i].FlowID = flowID
-		edges[i].CreatedAt = now
-		edges[i].UpdatedAt = now
-		// Debug: print incoming edges
-		println("DEBUG Edge received:", edges[i].ID)
-		println("  Source:", edges[i].Source)
-		println("  Target:", edges[i].Target)
-		println("  SourceHandle:", edges[i].SourceHandle)
-		println("  TargetHandle:", edges[i].TargetHandle)
-	}
-	if len(edges) > 0 {
-		if err := h.DB.Create(&edges).Error; err != nil {
-			return fmt.Errorf("Error to save edges")
+			edges[i].ID = uuid.New().String()
+			edges[i].FlowID = flowID
+			edges[i].CreatedAt = now
+			edges[i].UpdatedAt = now
 		}
-	}
-	flow.UpdatedAt = now
-	h.DB.Save(&flow)
 
-	return nil
+		if len(edges) > 0 {
+			if err := tx.Create(&edges).Error; err != nil {
+				return fmt.Errorf("Error to save edges")
+			}
+		}
+
+		flow.UpdatedAt = now
+		if err := tx.Save(&flow).Error; err != nil {
+			return fmt.Errorf("Error updating flow timestamp")
+		}
+
+		return nil
+	})
 }
 
 // CloneFlow - POST /api/flows/{id}/clone (only if belongs to user)
