@@ -3,6 +3,7 @@ package services
 import (
 	"capyflow/api/models"
 	"capyflow/api/websocket"
+	"strings"
 	"time"
 )
 
@@ -127,9 +128,9 @@ func (es *ExecutorService) executeNode(
 
 		for _, e := range edges {
 			// Use sourceHandle if available, otherwise use label
-			edgeIdentifier := e.SourceHandle
+			edgeIdentifier := normalizeIfBranchToken(e.SourceHandle)
 			if edgeIdentifier == "" {
-				edgeIdentifier = e.Label
+				edgeIdentifier = normalizeIfBranchToken(e.Label)
 			}
 
 			if edgeIdentifier == branch {
@@ -158,6 +159,24 @@ func (es *ExecutorService) executeNode(
 			return
 		}
 
+		// Legacy fallback: when there are at least 2 edges but no explicit labels,
+		// route deterministically by order (true -> first, false -> second).
+		if len(edges) >= 2 {
+			fallbackIdx := 1
+			if cond {
+				fallbackIdx = 0
+			}
+			es.executeNode(
+				edges[fallbackIdx].Target,
+				nodeMap,
+				edgeMap,
+				nodeOutputs,
+				visited,
+				result,
+			)
+			return
+		}
+
 		// If branch is not connected, end this path without failing the whole execution.
 		return
 	}
@@ -171,5 +190,17 @@ func (es *ExecutorService) executeNode(
 			visited,
 			result,
 		)
+	}
+}
+
+func normalizeIfBranchToken(raw string) string {
+	branch := strings.ToLower(strings.TrimSpace(raw))
+	switch branch {
+	case "true", "t", "yes", "y", "si", "sí", "1", "ok", "pass", "critical", "critico", "crítico":
+		return "true"
+	case "false", "f", "no", "n", "0", "fail", "normal":
+		return "false"
+	default:
+		return ""
 	}
 }

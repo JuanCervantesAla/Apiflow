@@ -14,6 +14,13 @@ type ExecutorService struct {
 	DB  *gorm.DB
 }
 
+var executorTriggerNodeTypes = map[string]bool{
+	"manual-trigger":   true,
+	"webhook-trigger":  true,
+	"cron-trigger":     true,
+	"telegram-trigger": true,
+}
+
 func NewExecutorService(db *gorm.DB, hub *websocket.Hub) *ExecutorService {
 	return &ExecutorService{
 		Hub: hub,
@@ -84,7 +91,7 @@ func (es *ExecutorService) execute(
 
 	var triggers []*models.Node
 	for i := range flow.Nodes {
-		if flow.Nodes[i].Category == string(models.CategoryTrigger) {
+		if flow.Nodes[i].Category == string(models.CategoryTrigger) || executorTriggerNodeTypes[flow.Nodes[i].Type] {
 			triggers = append(triggers, &flow.Nodes[i])
 		}
 	}

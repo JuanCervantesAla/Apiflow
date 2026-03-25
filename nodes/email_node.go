@@ -141,31 +141,6 @@ func sendWithSendGridAPI(params EmailParams, toList, ccList, bccList []string) (
 		return nil, fmt.Errorf("SENDGRID_API_KEY is required (node parameter or environment variable)")
 	}
 
-	fromName := strings.TrimSpace(params.FromName)
-	if fromName == "" {
-		fromName = "CapyFlow"
-	}
-
-	from := mail.NewEmail(fromName, params.From)
-	message := mail.NewV3Mail()
-	message.SetFrom(from)
-	message.Subject = params.Subject
-
-	personalization := mail.NewPersonalization()
-	for _, recipient := range toList {
-		personalization.AddTos(mail.NewEmail("", recipient))
-	}
-	for _, cc := range ccList {
-		personalization.AddCCs(mail.NewEmail("", cc))
-	}
-	for _, bcc := range bccList {
-		personalization.AddBCCs(mail.NewEmail("", bcc))
-	}
-	message.AddPersonalizations(personalization)
-
-	message.AddContent(mail.NewContent("text/plain", params.Body))
-	message.AddContent(mail.NewContent("text/html", renderProfessionalEmailHTML(params.Subject, params.Body, fromName)))
-
 	client := sendgrid.NewSendClient(token)
 	region := strings.ToLower(strings.TrimSpace(params.SendGridRegion))
 	if region == "eu" {
@@ -177,7 +152,7 @@ func sendWithSendGridAPI(params EmailParams, toList, ccList, bccList []string) (
 		client.Request = request
 	}
 
-	resp, err := client.Send(message)
+	resp, err := client.Send(buildSendGridMessage(params, toList, ccList, bccList, params.From, params.FromName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to call SendGrid API: %v", err)
 	}
@@ -201,11 +176,71 @@ func sendWithSendGridAPI(params EmailParams, toList, ccList, bccList []string) (
 		output["providerMessage"] = "Accepted by SendGrid (202). Empty body is expected for this provider."
 	}
 
+	if resp.StatusCode == 403 && strings.Contains(strings.ToLower(resp.Body), "sender identity") {
+		envFrom := strings.TrimSpace(os.Getenv("SENDGRID_SENDER_EMAIL"))
+		if envFrom != "" && !strings.EqualFold(envFrom, strings.TrimSpace(params.From)) {
+			retryName := strings.TrimSpace(os.Getenv("SENDGRID_SENDER_NAME"))
+			if retryName == "" {
+				retryName = params.FromName
+			}
+			respRetry, errRetry := client.Send(buildSendGridMessage(params, toList, ccList, bccList, envFrom, retryName))
+			if errRetry == nil {
+				output["retryWithEnvSender"] = true
+				output["retryFrom"] = envFrom
+				output["retryStatusCode"] = respRetry.StatusCode
+				output["retryResponse"] = respRetry.Body
+				if respRetry.StatusCode >= 200 && respRetry.StatusCode < 300 {
+					output["sent"] = true
+					output["statusCode"] = respRetry.StatusCode
+					output["response"] = respRetry.Body
+					output["providerResponseBody"] = respRetry.Body
+					output["headers"] = respRetry.Headers
+					output["providerMessage"] = "SendGrid accepted email using SENDGRID_SENDER_EMAIL fallback sender."
+					return output, nil
+				}
+			}
+		}
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return output, fmt.Errorf("sendgrid API error (status %d): %s", resp.StatusCode, resp.Body)
 	}
 
 	return output, nil
+}
+
+func buildSendGridMessage(
+	params EmailParams,
+	toList, ccList, bccList []string,
+	fromAddress string,
+	fromName string,
+) *mail.SGMailV3 {
+	resolvedFromName := strings.TrimSpace(fromName)
+	if resolvedFromName == "" {
+		resolvedFromName = "CapyFlow"
+	}
+
+	from := mail.NewEmail(resolvedFromName, strings.TrimSpace(fromAddress))
+	message := mail.NewV3Mail()
+	message.SetFrom(from)
+	message.Subject = params.Subject
+
+	personalization := mail.NewPersonalization()
+	for _, recipient := range toList {
+		personalization.AddTos(mail.NewEmail("", recipient))
+	}
+	for _, cc := range ccList {
+		personalization.AddCCs(mail.NewEmail("", cc))
+	}
+	for _, bcc := range bccList {
+		personalization.AddBCCs(mail.NewEmail("", bcc))
+	}
+	message.AddPersonalizations(personalization)
+
+	message.AddContent(mail.NewContent("text/plain", params.Body))
+	message.AddContent(mail.NewContent("text/html", renderProfessionalEmailHTML(params.Subject, params.Body, resolvedFromName)))
+
+	return message
 }
 
 // parseRecipients converts string or array to []string

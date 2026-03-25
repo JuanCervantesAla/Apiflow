@@ -80,10 +80,40 @@ func (h *WebhookHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	executionID := uuid.New().String()
 	userID := flow.UserID
 
+	execution := models.Execution{
+		ID:          executionID,
+		FlowID:      flowID,
+		UserID:      userID,
+		Status:      models.ExecutionStatusRunning,
+		StartedAt:   time.Now(),
+		TriggerType: "webhook",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := h.DB.Create(&execution).Error; err != nil {
+		RespondJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create webhook execution record"})
+		return
+	}
+
 	// Execute in background
 	go func() {
 		executorService := services.NewExecutorService(h.DB, h.Hub)
-		executorService.ExecuteFlowWithContext(&flow, initialContext, userID, executionID)
+		result := executorService.ExecuteFlowWithContext(&flow, initialContext, userID, executionID)
+
+		now := time.Now()
+		resultsJSON, _ := json.Marshal(result.Results)
+		executedNodesJSON, _ := json.Marshal(result.ExecutedNodes)
+
+		execution.Status = models.ExecutionStatus(result.Status)
+		execution.FinishedAt = &now
+		execution.DurationMs = result.DurationMs
+		execution.Results = string(resultsJSON)
+		execution.ExecutedNodes = string(executedNodesJSON)
+		execution.ErrorMessage = result.ErrorMessage
+		execution.UpdatedAt = now
+
+		h.DB.Save(&execution)
 	}()
 
 	// Return immediate response
@@ -178,9 +208,42 @@ func buildWebhookPayload(r *http.Request) (map[string]interface{}, error) {
 		return payload, nil
 	}
 
-	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-		payload["body"] = string(bodyBytes)
+	if err := json.Unmarshal(bodyBytes, &payload); err == nil {
+		// If body arrived as a JSON string inside the payload, normalize it.
+		if rawBody, ok := payload["body"].(string); ok {
+			rawBody = strings.TrimSpace(rawBody)
+			if strings.HasPrefix(rawBody, "{") {
+				var nested map[string]interface{}
+				if nestedErr := json.Unmarshal([]byte(rawBody), &nested); nestedErr == nil {
+					payload["body"] = nested
+					for k, v := range nested {
+						if _, exists := payload[k]; !exists {
+							payload[k] = v
+						}
+					}
+				}
+			}
+		}
+		return payload, nil
 	}
+
+	// Tolerate double-encoded JSON, e.g. "{\"title\":\"x\"}"
+	var encoded string
+	if err := json.Unmarshal(bodyBytes, &encoded); err == nil {
+		encoded = strings.TrimSpace(encoded)
+		if strings.HasPrefix(encoded, "{") {
+			var nested map[string]interface{}
+			if nestedErr := json.Unmarshal([]byte(encoded), &nested); nestedErr == nil {
+				for k, v := range nested {
+					payload[k] = v
+				}
+				payload["body"] = nested
+				return payload, nil
+			}
+		}
+	}
+
+	payload["body"] = string(bodyBytes)
 
 	return payload, nil
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type TelegramNode struct{}
@@ -47,10 +48,12 @@ func (n *TelegramNode) Execute(node *models.Node, prev map[string]map[string]int
 		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN is not configured")
 	}
 
-	// If chatId is empty, try to use default from config
-	chatID := params.ChatID
-	if chatID == "" {
-		chatID = cfg.Telegram.DefaultChatID
+	defaultChatID := strings.TrimSpace(cfg.Telegram.DefaultChatID)
+
+	// If chatId is empty or unresolved placeholder, use default from config.
+	chatID := strings.TrimSpace(params.ChatID)
+	if chatID == "" || strings.Contains(chatID, "{{") || strings.Contains(chatID, "}}") {
+		chatID = defaultChatID
 	}
 
 	if chatID == "" {
@@ -61,41 +64,28 @@ func (n *TelegramNode) Execute(node *models.Node, prev map[string]map[string]int
 		return nil, fmt.Errorf("message is required")
 	}
 
-	// Build Telegram API URL
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
-
-	// Prepare request body
-	requestBody := map[string]interface{}{
-		"chat_id": chatID,
-		"text":    params.Message,
-	}
-
-	if params.ParseMode != "" {
-		requestBody["parse_mode"] = params.ParseMode
-	}
-
-	jsonData, err := json.Marshal(requestBody)
+	telegramResp, err := sendTelegramMessage(botToken, chatID, params.Message, params.ParseMode)
 	if err != nil {
-		return nil, fmt.Errorf("error marshaling request: %v", err)
+		return nil, err
 	}
 
-	// Make HTTP request to Telegram API
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("error sending telegram message: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading response: %v", err)
-	}
-
-	// Parse Telegram response
-	var telegramResp TelegramResponse
-	if err := json.Unmarshal(body, &telegramResp); err != nil {
-		return nil, fmt.Errorf("error parsing telegram response: %v", err)
+	// Retry once with default chat id when node-level chat id is invalid.
+	if !telegramResp.OK && strings.Contains(strings.ToLower(telegramResp.Description), "chat not found") {
+		if defaultChatID != "" && defaultChatID != chatID {
+			telegramRespRetry, retryErr := sendTelegramMessage(botToken, defaultChatID, params.Message, params.ParseMode)
+			if retryErr != nil {
+				return nil, retryErr
+			}
+			if telegramRespRetry.OK {
+				return map[string]interface{}{
+					"sent":                 true,
+					"chatId":               defaultChatID,
+					"message":              params.Message,
+					"messageId":            telegramRespRetry.Result.MessageID,
+					"retryWithDefaultChat": true,
+				}, nil
+			}
+		}
 	}
 
 	output := map[string]interface{}{
@@ -108,8 +98,44 @@ func (n *TelegramNode) Execute(node *models.Node, prev map[string]map[string]int
 		output["messageId"] = telegramResp.Result.MessageID
 	} else {
 		output["error"] = telegramResp.Description
-		return output, fmt.Errorf("telegram API error: %s", telegramResp.Description)
+		return output, fmt.Errorf("telegram API error (chatId=%s): %s", chatID, telegramResp.Description)
 	}
 
 	return output, nil
+}
+
+func sendTelegramMessage(botToken, chatID, message, parseMode string) (*TelegramResponse, error) {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+
+	requestBody := map[string]interface{}{
+		"chat_id": chatID,
+		"text":    message,
+	}
+
+	if parseMode != "" {
+		requestBody["parse_mode"] = parseMode
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling request: %v", err)
+	}
+
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("error sending telegram message: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response: %v", err)
+	}
+
+	var telegramResp TelegramResponse
+	if err := json.Unmarshal(body, &telegramResp); err != nil {
+		return nil, fmt.Errorf("error parsing telegram response: %v", err)
+	}
+
+	return &telegramResp, nil
 }

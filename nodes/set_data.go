@@ -37,7 +37,14 @@ func (n *SetDataNode) Execute(
 func resolveSetDataValue(v interface{}, prev map[string]map[string]interface{}) interface{} {
 	switch val := v.(type) {
 	case string:
+		if resolved, ok := resolveExactOutputReference(val, prev); ok {
+			return resolved
+		}
+
 		interpolated := interpolateString(val, prev)
+		if parsed, ok := parseJSONStringValue(interpolated); ok {
+			return parsed
+		}
 		if strings.Contains(interpolated, "?") && strings.Contains(interpolated, ":") {
 			if evaluated, ok := evaluateSimpleTernary(interpolated); ok {
 				return evaluated
@@ -59,6 +66,54 @@ func resolveSetDataValue(v interface{}, prev map[string]map[string]interface{}) 
 	default:
 		return v
 	}
+}
+
+func resolveExactOutputReference(raw string, prev map[string]map[string]interface{}) (interface{}, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, false
+	}
+
+	matches := explicitNodePlaceholderRe.FindStringSubmatch(trimmed)
+	if len(matches) < 3 || matches[0] != trimmed {
+		return nil, false
+	}
+
+	nodeID := matches[1]
+	path := matches[2]
+	output, ok := prev[nodeID]
+	if !ok {
+		return nil, false
+	}
+
+	if path == "" {
+		return output, true
+	}
+
+	value, found := resolveOutputPath(output, path)
+	if !found {
+		return nil, false
+	}
+
+	return value, true
+}
+
+func parseJSONStringValue(raw string) (interface{}, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, false
+	}
+
+	if !(strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) {
+		return nil, false
+	}
+
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return nil, false
+	}
+
+	return parsed, true
 }
 
 // Supports simple expressions like:
