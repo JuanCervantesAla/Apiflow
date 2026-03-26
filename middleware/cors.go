@@ -8,8 +8,9 @@ import (
 
 func getAllowedOrigins() map[string]struct{} {
 	origins := map[string]struct{}{
-		"http://localhost:5173": {},
-		"http://localhost:5174": {},
+		"http://localhost:5173":                 {},
+		"http://localhost:5174":                 {},
+		"https://capyflow-reactss.onrender.com": {},
 	}
 
 	// Comma-separated list of additional allowed origins for deployed frontends.
