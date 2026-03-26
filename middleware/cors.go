@@ -2,14 +2,36 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
 )
 
+func getAllowedOrigins() map[string]struct{} {
+	origins := map[string]struct{}{
+		"http://localhost:5173": {},
+		"http://localhost:5174": {},
+	}
+
+	// Comma-separated list of additional allowed origins for deployed frontends.
+	if envOrigins := os.Getenv("ALLOWED_ORIGINS"); envOrigins != "" {
+		for _, origin := range strings.Split(envOrigins, ",") {
+			clean := strings.TrimSpace(origin)
+			if clean != "" {
+				origins[clean] = struct{}{}
+			}
+		}
+	}
+
+	return origins
+}
+
 func CORS(next http.Handler) http.Handler {
+	allowedOrigins := getAllowedOrigins()
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		origin := r.Header.Get("Origin")
-		if origin == "http://localhost:5173" || origin == "http://localhost:5174" {
+		if _, ok := allowedOrigins[origin]; ok {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
